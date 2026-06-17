@@ -2,8 +2,43 @@
 // AI Service - Gemini Integration
 // ========================================
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyDev2BNegZQVnBFN6Z0gWXCv6SH7wyAvJU';
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+import { getAppSettings } from './firebase';
+
+const ENV_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+
+// ----------------------------------------
+// Managed API Key (Firestore > .env)
+// ----------------------------------------
+let _firestoreKey = '';
+
+/** Load key from Firestore (call once on app init) */
+export async function loadGeminiKey(): Promise<void> {
+    try {
+        const settings = await getAppSettings();
+        if (settings && typeof settings.geminiApiKey === 'string' && settings.geminiApiKey.length > 10) {
+            _firestoreKey = settings.geminiApiKey;
+        }
+    } catch (error) {
+        console.error('Failed to load Gemini key from Firestore:', error);
+    }
+}
+
+/** Update in-memory key after saving from the UI */
+export function setGeminiKey(key: string): void {
+    _firestoreKey = key;
+}
+
+/** Get effective key: Firestore first, then .env */
+function getEffectiveApiKey(): string {
+    return _firestoreKey || ENV_GEMINI_API_KEY;
+}
+
+// Check if API is configured
+export function isAIConfigured(): boolean {
+    const key = getEffectiveApiKey();
+    return !!key && key.length > 10;
+}
 
 // Types for imported funnel
 export interface ImportedStep {
@@ -32,11 +67,6 @@ export interface AIResponse {
     funnel?: ImportedFunnel;
     questions?: string[];
     error?: string;
-}
-
-// Check if API is configured
-export function isAIConfigured(): boolean {
-    return !!GEMINI_API_KEY && GEMINI_API_KEY.length > 10;
 }
 
 // Helper to retry API calls with exponential backoff
@@ -73,7 +103,7 @@ export async function parseFunnelWithAI(funnelText: string, additionalContext?: 
     if (!isAIConfigured()) {
         return {
             success: false,
-            error: 'API do Gemini não configurada. Adicione VITE_GEMINI_API_KEY no arquivo .env'
+            error: 'API do Gemini não configurada. Configure a chave na tela de Configurações ou no arquivo .env'
         };
     }
 
@@ -134,7 +164,7 @@ Responda APENAS com JSON válido no formato:
         : funnelText;
 
     try {
-        const response = await fetchWithRetry(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+        const response = await fetchWithRetry(`${GEMINI_API_URL}?key=${getEffectiveApiKey()}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -298,7 +328,7 @@ SAÍDA ESPERADA (JSON):
 }`;
 
     try {
-        const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+        const response = await fetch(`${GEMINI_API_URL}?key=${getEffectiveApiKey()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -340,5 +370,104 @@ SAÍDA ESPERADA (JSON):
     } catch (error) {
         console.error('Error generating mentor response:', error);
         return { success: false, error: 'Erro ao gerar resposta com IA' };
+    }
+}
+
+// ----------------------------------------
+// Agent Chat — System Prompt Builder
+// ----------------------------------------
+export interface AgentConfig {
+    base: string;
+    tone?: string;
+    handoffRule?: string;
+    responseMode?: 'single' | 'split';
+    maxMessages?: number;
+}
+
+export function buildAgentSystemPrompt(config: AgentConfig): string {
+    const sections: string[] = [config.base.trim()];
+
+    if (config.tone && config.tone.trim()) {
+        sections.push(`\nTOM DE VOZ: responda sempre com o seguinte tom: ${config.tone.trim()}`);
+    }
+
+    if (config.handoffRule && config.handoffRule.trim()) {
+        sections.push(`\nREGRA DE TRANSFERÊNCIA PARA HUMANO: ${config.handoffRule.trim()}. Quando essa situação ocorrer, deixe claro na resposta que vai transferir para um atendente humano.`);
+    }
+
+    if (config.responseMode === 'split' && config.maxMessages && config.maxMessages > 1) {
+        sections.push(`\nFORMATO DE RESPOSTA: divida sua resposta em no máximo ${config.maxMessages} mensagens curtas e separadas. Separe cada mensagem com uma linha contendo exatamente '---' (três hifens), e nada mais nessa linha. Não use '---' dentro do conteúdo de uma mensagem.`);
+    } else {
+        sections.push(`\nFORMATO DE RESPOSTA: responda em uma única mensagem. Não use o separador '---'.`);
+    }
+
+    return sections.join('\n');
+}
+
+// ----------------------------------------
+// Agent Chat — Multi-turn Gemini conversation
+// ----------------------------------------
+export interface ChatTurn {
+    role: 'user' | 'model';
+    text: string;
+}
+
+export async function chatWithAgent(
+    systemPrompt: string,
+    history: ChatTurn[],
+    userMessage: string,
+): Promise<{ success: boolean; text?: string; error?: string }> {
+    if (!isAIConfigured()) {
+        return { success: false, error: 'API do Gemini não configurada.' };
+    }
+
+    // Build contents array: history + current user message
+    const contents = [
+        ...history.map((turn) => ({
+            role: turn.role,
+            parts: [{ text: turn.text }],
+        })),
+        {
+            role: 'user' as const,
+            parts: [{ text: userMessage }],
+        },
+    ];
+
+    try {
+        const response = await fetchWithRetry(`${GEMINI_API_URL}?key=${getEffectiveApiKey()}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }],
+                },
+                contents,
+                generationConfig: {
+                    temperature: 0.7,
+                    maxOutputTokens: 1024,
+                },
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            const msg = (errorData as { error?: { message?: string } }).error?.message || response.statusText;
+            return { success: false, error: `Erro na API: ${msg}` };
+        }
+
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        if (!text) {
+            return { success: false, error: 'A IA não retornou resposta.' };
+        }
+
+        return { success: true, text };
+    } catch (error) {
+        console.error('Error in chatWithAgent:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Erro de rede ao chamar a IA.',
+        };
     }
 }

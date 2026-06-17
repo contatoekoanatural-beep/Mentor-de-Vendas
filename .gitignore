@@ -11,6 +11,14 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+
+# Firebase runtime config (pode conter segredos)
+.runtimeconfig.json
+
+# Arquivos temporários de recuperação de functions
+functions_backup_source.zip
+functions_backup_extracted/
 
 # Editor directories and files
 .vscode/*

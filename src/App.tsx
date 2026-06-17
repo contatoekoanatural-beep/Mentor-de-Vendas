@@ -7,17 +7,18 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { ProductProvider } from './contexts/ProductContext';
+import { loadGeminiKey } from './services/aiService';
 import Layout from './components/layout/Layout';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Atendimento from './pages/Atendimento';
-import Funis from './pages/Funis';
-import FunilDetalhe from './pages/FunilDetalhe';
-import FlowchartEditor from './pages/FlowchartEditor';
-import Objecoes from './pages/Objecoes';
-import Casos from './pages/Casos';
-import ImportFunnel from './pages/ImportFunnel';
+import Produtos from './pages/Produtos';
+import AgentesList from './pages/AgentesList';
+import AgenteDetalhe from './pages/AgenteDetalhe';
+import Testes from './pages/Testes';
+import Configuracoes from './pages/Configuracoes';
 import './index.css';
+
+// Load Gemini API key from Firestore on app start
+loadGeminiKey();
 
 // Protected Route Component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -39,24 +40,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Owner Only Route
-function OwnerRoute({ children }: { children: React.ReactNode }) {
-  const { isOwner, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="loading-page" style={{ minHeight: '100vh' }}>
-        <div className="loading-spinner" />
-      </div>
-    );
-  }
-
-  if (!isOwner) {
-    return <Navigate to="/" replace />;
-  }
-
-  return <>{children}</>;
-}
 
 // App Routes
 function AppRoutes() {
@@ -81,28 +64,12 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Dashboard />} />
-        <Route path="atendimento" element={<Atendimento />} />
-        <Route path="funis" element={<Funis />} />
-        <Route path="funis/importar" element={<OwnerRoute><ImportFunnel /></OwnerRoute>} />
-        <Route path="funis/:id" element={<FunilDetalhe />} />
-        <Route
-          path="flowchart/:id"
-          element={
-            <OwnerRoute>
-              <FlowchartEditor />
-            </OwnerRoute>
-          }
-        />
-        <Route
-          path="objecoes"
-          element={
-            <OwnerRoute>
-              <Objecoes />
-            </OwnerRoute>
-          }
-        />
-        <Route path="casos" element={<Casos />} />
+        <Route index element={<Navigate to="/produtos" replace />} />
+        <Route path="produtos" element={<Produtos />} />
+        <Route path="produtos/:productId/agentes" element={<AgentesList />} />
+        <Route path="produtos/:productId/agentes/:agentId" element={<AgenteDetalhe />} />
+        <Route path="testes" element={<Testes />} />
+        <Route path="configuracoes" element={<Configuracoes />} />
       </Route>
 
       {/* Fallback */}

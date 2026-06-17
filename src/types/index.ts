@@ -496,3 +496,46 @@ export const PREDEFINED_VARIABLES: ConditionVariable[] = [
     { name: 'estado_lead', template: '{{estado_lead}}', type: 'string', source: 'lead_data', description: 'Estado/UF do lead' },
     { name: 'valor_pedido', template: '{{valor_pedido}}', type: 'number', source: 'form_input', description: 'Valor do pedido' },
 ];
+
+// ----------------------------------------
+// Agent Types
+// ----------------------------------------
+export interface Agent {
+    id: string;
+    productId: string;
+    name: string;
+    base: string;
+    responseMode?: 'single' | 'split';
+    maxMessages?: number;
+    tone?: string;
+    handoffRule?: string;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
+// ----------------------------------------
+// Agent Objection Types
+// ----------------------------------------
+export interface AgentObjection {
+    id: string;
+    agentId: string;
+    trigger: string;
+    response: string;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
+// ----------------------------------------
+// Agent Case Types
+// ----------------------------------------
+export interface AgentCase {
+    id: string;
+    agentId: string;
+    title: string;
+    kind: 'good' | 'bad';
+    content: string;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
+

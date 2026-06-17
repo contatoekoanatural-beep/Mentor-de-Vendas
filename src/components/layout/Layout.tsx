@@ -27,7 +27,7 @@ export default function Layout() {
 export function useLayoutContext() {
     const context = React.useContext(React.createContext({
         showCreateModal: false,
-        setShowCreateModal: (value: boolean) => { }
+        setShowCreateModal: (_value: boolean) => { }
     }));
     return context;
 }

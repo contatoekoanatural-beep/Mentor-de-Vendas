@@ -47,6 +47,9 @@ import type {
     AuditLogEntry,
     AuditAction,
     AuditEntityType,
+    Agent,
+    AgentObjection,
+    AgentCase,
 } from '../types';
 
 // ----------------------------------------
@@ -97,6 +100,10 @@ export const COLLECTIONS = {
     cases: 'cases',
     supportSessions: 'supportSessions',
     auditLog: 'auditLog',
+    agents: 'agents',
+    agentObjections: 'agentObjections',
+    agentCases: 'agentCases',
+    settings: 'settings',
 } as const;
 
 // ----------------------------------------
@@ -482,6 +489,74 @@ export const logAudit = (
         entityName,
         metadata,
     } as unknown as Omit<AuditLogEntry, 'id'>);
+
+// ----------------------------------------
+// Agent Functions
+// ----------------------------------------
+export const getAgents = (productId: string) =>
+    getDocuments<Agent>(COLLECTIONS.agents, where('productId', '==', productId));
+
+export const getAgent = (id: string) =>
+    getDocument<Agent>(COLLECTIONS.agents, id);
+
+export const createAgent = (data: Omit<Agent, 'id' | 'createdAt' | 'updatedAt'>) =>
+    createDocument<Agent>(COLLECTIONS.agents, data as unknown as Omit<Agent, 'id'>);
+
+export const updateAgent = (id: string, data: Partial<Agent>) =>
+    updateDocument<Agent>(COLLECTIONS.agents, id, data);
+
+export const deleteAgent = (id: string) =>
+    deleteDocument(COLLECTIONS.agents, id);
+
+// ----------------------------------------
+// Agent Objection Functions
+// ----------------------------------------
+export const getAgentObjections = (agentId: string) =>
+    getDocuments<AgentObjection>(COLLECTIONS.agentObjections, where('agentId', '==', agentId));
+
+export const createAgentObjection = (data: Omit<AgentObjection, 'id' | 'createdAt' | 'updatedAt'>) =>
+    createDocument<AgentObjection>(COLLECTIONS.agentObjections, data as unknown as Omit<AgentObjection, 'id'>);
+
+export const updateAgentObjection = (id: string, data: Partial<AgentObjection>) =>
+    updateDocument<AgentObjection>(COLLECTIONS.agentObjections, id, data);
+
+export const deleteAgentObjection = (id: string) =>
+    deleteDocument(COLLECTIONS.agentObjections, id);
+
+// ----------------------------------------
+// Agent Case Functions
+// ----------------------------------------
+export const getAgentCases = (agentId: string) =>
+    getDocuments<AgentCase>(COLLECTIONS.agentCases, where('agentId', '==', agentId));
+
+export const createAgentCase = (data: Omit<AgentCase, 'id' | 'createdAt' | 'updatedAt'>) =>
+    createDocument<AgentCase>(COLLECTIONS.agentCases, data as unknown as Omit<AgentCase, 'id'>);
+
+export const updateAgentCase = (id: string, data: Partial<AgentCase>) =>
+    updateDocument<AgentCase>(COLLECTIONS.agentCases, id, data);
+
+export const deleteAgentCase = (id: string) =>
+    deleteDocument(COLLECTIONS.agentCases, id);
+
+// ----------------------------------------
+// App Settings Functions
+// ----------------------------------------
+export async function getAppSettings(): Promise<Record<string, unknown> | null> {
+    const docRef = doc(db, COLLECTIONS.settings, 'app');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+        return docSnap.data() as Record<string, unknown>;
+    }
+    return null;
+}
+
+export async function saveAppSettings(data: Record<string, unknown>): Promise<void> {
+    const docRef = doc(db, COLLECTIONS.settings, 'app');
+    await setDoc(docRef, {
+        ...data,
+        updatedAt: serverTimestamp(),
+    }, { merge: true });
+}
 
 // ----------------------------------------
 // Storage Functions

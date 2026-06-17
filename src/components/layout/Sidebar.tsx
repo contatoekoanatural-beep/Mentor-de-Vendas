@@ -2,25 +2,19 @@
 // Sidebar Component
 // ========================================
 
-import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
-    LayoutDashboard,
-    MessageSquare,
-    GitBranch,
-    FolderOpen,
-    AlertCircle,
+    Package,
+    FlaskConical,
+    Settings,
     LogOut,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import ProductSelector from './ProductSelector';
 
 const navItems = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard, ownerOnly: false },
-    { path: '/atendimento', label: 'Atendimento', icon: MessageSquare, ownerOnly: false },
-    { path: '/funis', label: 'Funis', icon: GitBranch, ownerOnly: false },
-    { path: '/casos', label: 'Casos', icon: FolderOpen, ownerOnly: false },
-    { path: '/objecoes', label: 'Objeções', icon: AlertCircle, ownerOnly: true },
+    { path: '/produtos', label: 'Produtos', icon: Package, ownerOnly: false },
+    { path: '/testes', label: 'Testes', icon: FlaskConical, ownerOnly: false },
+    { path: '/configuracoes', label: 'Configurações', icon: Settings, ownerOnly: false },
 ];
 
 export default function Sidebar() {
@@ -62,9 +56,6 @@ export default function Sidebar() {
 
             {/* Footer */}
             <div className="sidebar-footer">
-                {/* Product Selector */}
-                <ProductSelector />
-
                 {/* User Profile */}
                 <div className="user-profile">
                     <div className="user-avatar">
