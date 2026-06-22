@@ -50,6 +50,7 @@ import type {
     Agent,
     AgentObjection,
     AgentCase,
+    Conversation,
 } from '../types';
 
 // ----------------------------------------
@@ -104,6 +105,7 @@ export const COLLECTIONS = {
     agentObjections: 'agentObjections',
     agentCases: 'agentCases',
     settings: 'settings',
+    conversations: 'conversations',
 } as const;
 
 // ----------------------------------------
@@ -199,6 +201,9 @@ export const createProduct = (data: Omit<Product, 'id' | 'createdAt' | 'updatedA
 
 export const updateProduct = (id: string, data: Partial<Product>) =>
     updateDocument<Product>(COLLECTIONS.products, id, data);
+
+export const deleteProduct = (id: string) =>
+    deleteDocument(COLLECTIONS.products, id);
 
 // ----------------------------------------
 // Funnel Functions
@@ -557,6 +562,23 @@ export async function saveAppSettings(data: Record<string, unknown>): Promise<vo
         updatedAt: serverTimestamp(),
     }, { merge: true });
 }
+
+// ----------------------------------------
+// Conversation Functions
+// ----------------------------------------
+export const getConversations = () =>
+    getDocuments<Conversation>(COLLECTIONS.conversations);
+
+export const setConversationAtivo = (id: string, ativo: boolean) =>
+    updateDocument(COLLECTIONS.conversations, id, { ativo });
+
+export const resetConversation = (id: string) =>
+    updateDocument(COLLECTIONS.conversations, id, {
+        messages: [],
+        ativo: false,
+        ultimaMensagemTs: null,
+        updatedAt: serverTimestamp()
+    });
 
 // ----------------------------------------
 // Storage Functions

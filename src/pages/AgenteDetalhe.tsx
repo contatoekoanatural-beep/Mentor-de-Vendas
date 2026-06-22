@@ -9,6 +9,16 @@ import { ChevronLeft, Sparkles, AlertTriangle, Database, Save, Plus, Pencil, Tra
 
 type TabType = 'base' | 'configuracoes' | 'objecoes' | 'casos';
 
+/** Normaliza texto para slug: minúsculo, sem acentos, espaços → hífen, só a-z 0-9 e hífen */
+function normalizeSlug(value: string): string {
+    return value
+        .normalize('NFD')                    // decompõe acentos
+        .replace(/[\u0300-\u036f]/g, '')     // remove diacríticos
+        .toLowerCase()
+        .replace(/\s+/g, '-')               // espaços viram hífen
+        .replace(/[^a-z0-9-]/g, '');         // remove tudo que não for a-z, 0-9, hífen
+}
+
 export default function AgenteDetalhe() {
     const { productId, agentId } = useParams<{ productId: string; agentId: string }>();
     const { addToast } = useToast();
@@ -33,7 +43,9 @@ export default function AgenteDetalhe() {
     const [maxMessages, setMaxMessages] = useState(3);
     const [tone, setTone] = useState('');
     const [handoffRule, setHandoffRule] = useState('');
-    const [initialConfigState, setInitialConfigState] = useState({ responseMode: 'single' as 'single' | 'split', maxMessages: 3, tone: '', handoffRule: '' });
+    const [slug, setSlug] = useState('');
+    const [debounceSegundos, setDebounceSegundos] = useState(8);
+    const [initialConfigState, setInitialConfigState] = useState({ responseMode: 'single' as 'single' | 'split', maxMessages: 3, tone: '', handoffRule: '', slug: '', debounceSegundos: 8 });
     const [isSavingConfig, setIsSavingConfig] = useState(false);
 
     // Objeções Tab States
@@ -73,11 +85,15 @@ export default function AgenteDetalhe() {
                     const mm = data.maxMessages ?? 3;
                     const t = data.tone || '';
                     const hr = data.handoffRule || '';
+                    const sl = data.slug || '';
+                    const ds = data.debounceSegundos ?? 8;
                     setResponseMode(rm);
                     setMaxMessages(mm);
                     setTone(t);
                     setHandoffRule(hr);
-                    setInitialConfigState({ responseMode: rm, maxMessages: mm, tone: t, handoffRule: hr });
+                    setSlug(sl);
+                    setDebounceSegundos(ds);
+                    setInitialConfigState({ responseMode: rm, maxMessages: mm, tone: t, handoffRule: hr, slug: sl, debounceSegundos: ds });
                 }
             } catch (error) {
                 console.error('Error loading agent:', error);
@@ -137,7 +153,9 @@ export default function AgenteDetalhe() {
             responseMode !== initialConfigState.responseMode ||
             maxMessages !== initialConfigState.maxMessages ||
             tone !== initialConfigState.tone ||
-            handoffRule !== initialConfigState.handoffRule
+            handoffRule !== initialConfigState.handoffRule ||
+            slug !== initialConfigState.slug ||
+            debounceSegundos !== initialConfigState.debounceSegundos
         );
     };
 
@@ -275,13 +293,15 @@ export default function AgenteDetalhe() {
                 responseMode,
                 tone,
                 handoffRule,
+                slug,
+                debounceSegundos,
             };
             if (responseMode === 'split') {
                 payload.maxMessages = maxMessages;
             }
             await updateAgent(agentId, payload);
             setAgent((prev) => prev ? { ...prev, ...payload } : prev);
-            setInitialConfigState({ responseMode, maxMessages, tone, handoffRule });
+            setInitialConfigState({ responseMode, maxMessages, tone, handoffRule, slug, debounceSegundos });
             addToast('Configurações do agente salvas com sucesso!', 'success');
         } catch (error) {
             console.error('Error saving agent config:', error);
@@ -398,12 +418,14 @@ export default function AgenteDetalhe() {
                 >
                     Configurações
                 </button>
+                {/* Ocultado visualmente conforme solicitação
                 <button
                     className={`tab ${activeTab === 'objecoes' ? 'active' : ''}`}
                     onClick={() => setActiveTab('objecoes')}
                 >
                     Objeções
                 </button>
+                */}
                 <button
                     className={`tab ${activeTab === 'casos' ? 'active' : ''}`}
                     onClick={() => setActiveTab('casos')}
@@ -546,15 +568,15 @@ export default function AgenteDetalhe() {
                     </div>
 
                     {/* Bloco 3: Regra de Handoff */}
-                    <div style={{ ...sectionCardStyle, marginBottom: 0 }}>
-                        <h4 style={sectionTitleStyle}>Regra de Handoff (Transferência para humano)</h4>
+                    <div style={sectionCardStyle}>
+                        <h4 style={sectionTitleStyle}>Acionar Vendedor (Lead Pronto)</h4>
                         <p style={sectionDescStyle}>
-                            Descreva em que situações o agente deve parar de responder e transferir o atendimento para um humano. Exemplos: "Quando o cliente pedir para falar com um atendente", "Quando o assunto envolver cancelamento ou reembolso".
+                            Descreva a condição em que o cliente é considerado um lead pronto para o vendedor fechar. A IA vai sinalizar internamente e CONTINUAR atendendo normalmente. Ex: cliente já informou a quantidade de frascos, o endereço completo e está aguardando os dados de pagamento.
                         </p>
                         <textarea
                             value={handoffRule}
                             onChange={(e) => setHandoffRule(e.target.value)}
-                            placeholder="Ex: Sempre que o cliente mencionar 'cancelamento', 'reembolso' ou pedir explicitamente para falar com uma pessoa real."
+                            placeholder="Ex: Cliente informou a quantidade de frascos que deseja comprar, informou o endereço completo de entrega e concordou com o preço do frete."
                             disabled={isSavingConfig}
                             style={{
                                 width: '100%',
@@ -570,6 +592,73 @@ export default function AgenteDetalhe() {
                                 resize: 'vertical',
                             }}
                         />
+                    </div>
+
+                    {/* Bloco 4: Apelido (slug) */}
+                    <div style={{ ...sectionCardStyle, marginBottom: 'var(--spacing-lg)' }}>
+                        <h4 style={sectionTitleStyle}>Apelido (slug)</h4>
+                        <p style={sectionDescStyle}>
+                            Identificador fixo usado nas integrações (ex: WhatsApp). Use letras minúsculas, sem espaços nem acentos.
+                        </p>
+                        <input
+                            type="text"
+                            value={slug}
+                            onChange={(e) => setSlug(normalizeSlug(e.target.value))}
+                            placeholder="Ex: patricia-closer"
+                            disabled={isSavingConfig}
+                            style={{
+                                width: '100%',
+                                maxWidth: '320px',
+                                padding: 'var(--spacing-md)',
+                                borderRadius: 'var(--radius-md)',
+                                border: '1px solid var(--color-border)',
+                                backgroundColor: 'var(--color-bg)',
+                                color: 'var(--color-text)',
+                                fontFamily: 'inherit',
+                                fontSize: 'var(--text-sm)',
+                            }}
+                        />
+                    </div>
+
+                    {/* Bloco 5: Tempo de espera do debounce */}
+                    <div style={{ ...sectionCardStyle, marginBottom: 0 }}>
+                        <h4 style={sectionTitleStyle}>Tempo de espera antes de responder (segundos)</h4>
+                        <p style={sectionDescStyle}>
+                            Tempo que a IA aguarda após a última mensagem do cliente antes de responder, para juntar mensagens enviadas em sequência. Padrão: 8 segundos. Use 0 para responder imediatamente.
+                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
+                            <input
+                                type="number"
+                                value={debounceSegundos}
+                                onChange={(e) => {
+                                    const rawVal = e.target.value;
+                                    if (rawVal === '') {
+                                        setDebounceSegundos(0);
+                                        return;
+                                    }
+                                    let val = parseInt(rawVal, 10);
+                                    if (isNaN(val)) val = 0;
+                                    const clamped = Math.max(0, Math.min(30, val));
+                                    setDebounceSegundos(clamped);
+                                }}
+                                min={0}
+                                max={30}
+                                disabled={isSavingConfig}
+                                style={{
+                                    width: '80px',
+                                    padding: 'var(--spacing-sm)',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid var(--color-border)',
+                                    backgroundColor: 'var(--color-bg)',
+                                    color: 'var(--color-text)',
+                                    fontSize: 'var(--text-sm)',
+                                    textAlign: 'center',
+                                }}
+                            />
+                            <span className="text-muted text-xs">
+                                (entre 0 e 30 segundos)
+                            </span>
+                        </div>
                     </div>
 
                     {/* Botão Salvar */}

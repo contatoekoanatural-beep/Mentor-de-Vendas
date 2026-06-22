@@ -392,7 +392,22 @@ export function buildAgentSystemPrompt(config: AgentConfig): string {
     }
 
     if (config.handoffRule && config.handoffRule.trim()) {
-        sections.push(`\nREGRA DE TRANSFERÊNCIA PARA HUMANO: ${config.handoffRule.trim()}. Quando essa situação ocorrer, deixe claro na resposta que vai transferir para um atendente humano.`);
+        sections.push(
+            `\nCONDIÇÃO DE LEAD PRONTO (OBRIGATÓRIO):
+Quando a seguinte situação ocorrer — ${config.handoffRule.trim()} — você DEVE obrigatoriamente adicionar o marcador [LEAD_PRONTO] ao final absoluto da sua resposta.
+
+Regras rigorosas para a emissão do marcador:
+1. O marcador [LEAD_PRONTO] deve ser escrito exatamente dessa forma (letras maiúsculas e entre colchetes) em uma LINHA TOTALMENTE ISOLADA no final absoluto de toda a sua resposta.
+2. O marcador deve ficar sempre DEPOIS da última linha de conteúdo e DEPOIS de qualquer separador de mensagens "---" (caso esteja no formato split). O marcador NÃO é uma mensagem para o cliente e NÃO deve ser tratado como uma das partes do split. Não insira outro separador "---" após o marcador.
+3. Este marcador é de uso estritamente interno do sistema e invisível para o cliente. NUNCA mencione, explique ou faça referência ao marcador "[LEAD_PRONTO]" na conversa com o cliente.
+4. Você deve CONTINUAR conversando e atendendo o cliente normalmente, respondendo suas dúvidas e conduzindo o fechamento como se você fosse o vendedor. NÃO pare de responder e NÃO encerre o fluxo.
+
+Exemplo de formato de resposta quando a condição de lead pronto ocorre:
+Mensagem explicativa 1 ao cliente.
+---
+Mensagem explicativa 2 com a pergunta de avanço comercial.
+[LEAD_PRONTO]`
+        );
     }
 
     if (config.responseMode === 'split' && config.maxMessages && config.maxMessages > 1) {

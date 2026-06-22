@@ -13,7 +13,7 @@ import Login from './pages/Login';
 import Produtos from './pages/Produtos';
 import AgentesList from './pages/AgentesList';
 import AgenteDetalhe from './pages/AgenteDetalhe';
-import Testes from './pages/Testes';
+import Conversas from './pages/Conversas';
 import Configuracoes from './pages/Configuracoes';
 import './index.css';
 
@@ -68,7 +68,7 @@ function AppRoutes() {
         <Route path="produtos" element={<Produtos />} />
         <Route path="produtos/:productId/agentes" element={<AgentesList />} />
         <Route path="produtos/:productId/agentes/:agentId" element={<AgenteDetalhe />} />
-        <Route path="testes" element={<Testes />} />
+        <Route path="conversas" element={<Conversas />} />
         <Route path="configuracoes" element={<Configuracoes />} />
       </Route>
 

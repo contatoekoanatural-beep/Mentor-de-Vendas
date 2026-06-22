@@ -11,7 +11,6 @@ interface TopbarProps {
 
 const PAGE_TITLES: Record<string, string> = {
     '/produtos': 'Produtos',
-    '/testes': 'Testes',
     '/configuracoes': 'Configurações',
 };
 

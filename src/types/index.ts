@@ -504,11 +504,13 @@ export interface Agent {
     id: string;
     productId: string;
     name: string;
+    slug?: string;
     base: string;
     responseMode?: 'single' | 'split';
     maxMessages?: number;
     tone?: string;
     handoffRule?: string;
+    debounceSegundos?: number;
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }
@@ -536,6 +538,25 @@ export interface AgentCase {
     content: string;
     createdAt: Timestamp;
     updatedAt: Timestamp;
+}
+
+// ----------------------------------------
+// Conversation Types (read-only viewer)
+// ----------------------------------------
+export interface ConversationMessage {
+    role: 'user' | 'model';
+    text: string;
+    ts: number;
+}
+
+export interface Conversation {
+    id: string;
+    numero: string;
+    agenteSlug: string;
+    messages: ConversationMessage[];
+    ativo?: boolean; // toggle: Patrícia só responde se true
+    updatedAt: any; // Firestore Timestamp or Unix number
+    status?: string;
 }
 
 

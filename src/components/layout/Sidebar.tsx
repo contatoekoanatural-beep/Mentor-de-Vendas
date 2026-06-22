@@ -5,7 +5,7 @@
 import { NavLink } from 'react-router-dom';
 import {
     Package,
-    FlaskConical,
+    MessageSquare,
     Settings,
     LogOut,
 } from 'lucide-react';
@@ -13,7 +13,7 @@ import { useAuth } from '../../contexts/AuthContext';
 
 const navItems = [
     { path: '/produtos', label: 'Produtos', icon: Package, ownerOnly: false },
-    { path: '/testes', label: 'Testes', icon: FlaskConical, ownerOnly: false },
+    { path: '/conversas', label: 'Conversas', icon: MessageSquare, ownerOnly: false },
     { path: '/configuracoes', label: 'Configurações', icon: Settings, ownerOnly: false },
 ];
 
