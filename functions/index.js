@@ -27,6 +27,8 @@ if (!admin.apps.length) admin.initializeApp();
 // this will be the maximum concurrent request count.
 setGlobalOptions({ maxInstances: 10 });
 
+const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/SO1i3lkKlRoiNbH7z2HCT0KrwQ5hsFWxDObKYpFL6y";
+
 // ----------------------------------------
 // ping — Cloud Function de teste
 // Retorna um JSON simples pra confirmar que o deploy funcionou.
@@ -339,15 +341,40 @@ exports.webhookConverteChat = onRequest(async (request, response) => {
       const agora = Date.now();
       historicoAtualizado.push({ role: "model", text: respostaLimpa, ts: agora });
 
-      await convRef.set(
-        {
-          messages: historicoAtualizado,
-          numero,
-          agenteSlug,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const updateData = {
+        messages: historicoAtualizado,
+        numero,
+        agenteSlug,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      if (leadPronto) {
+        updateData.leadPronto = true;
+      }
+
+      await convRef.set(updateData, { merge: true });
+
+      if (leadPronto) {
+        try {
+          logger.info("Disparando webhook de lead quente", { numero });
+          const responseHook = await fetch(RESPONDECHAT_WEBHOOK_LEAD, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              client_phone: numero,
+              client_name: "Lead Quente",
+            }),
+          });
+          logger.info("Resposta do webhook de lead quente", {
+            status: responseHook.status,
+            statusText: responseHook.statusText,
+          });
+        } catch (err) {
+          logger.error("Erro ao disparar webhook de lead quente", err);
+        }
+      }
 
       // Split em mensagens (mesma lógica do AgentChat.tsx)
       const isSplitMode =
@@ -758,15 +785,40 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       const agora = Date.now();
       historicoAtualizado.push({ role: "model", text: respostaLimpa, ts: agora });
 
-      await convRef.set(
-        {
-          messages: historicoAtualizado,
-          numero,
-          agenteSlug,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const updateData = {
+        messages: historicoAtualizado,
+        numero,
+        agenteSlug,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      if (leadPronto) {
+        updateData.leadPronto = true;
+      }
+
+      await convRef.set(updateData, { merge: true });
+
+      if (leadPronto) {
+        try {
+          logger.info("Disparando webhook de lead quente", { numero });
+          const responseHook = await fetch(RESPONDECHAT_WEBHOOK_LEAD, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              client_phone: numero,
+              client_name: "Lead Quente",
+            }),
+          });
+          logger.info("Resposta do webhook de lead quente", {
+            status: responseHook.status,
+            statusText: responseHook.statusText,
+          });
+        } catch (err) {
+          logger.error("Erro ao disparar webhook de lead quente", err);
+        }
+      }
 
       // Split em mensagens
       const isSplitMode =

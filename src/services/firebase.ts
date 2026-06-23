@@ -577,6 +577,7 @@ export const resetConversation = (id: string) =>
         messages: [],
         ativo: false,
         ultimaMensagemTs: null,
+        leadPronto: false,
         updatedAt: serverTimestamp()
     });
 

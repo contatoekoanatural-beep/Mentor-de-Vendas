@@ -557,6 +557,7 @@ export interface Conversation {
     ativo?: boolean; // toggle: Patrícia só responde se true
     updatedAt: any; // Firestore Timestamp or Unix number
     status?: string;
+    leadPronto?: boolean;
 }
 
 

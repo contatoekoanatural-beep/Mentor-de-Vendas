@@ -135,7 +135,7 @@ export default function Conversas() {
             setConversations((prev) =>
                 prev.map((c) =>
                     c.id === selected.id
-                        ? { ...c, messages: [], ativo: false, ultimaMensagemTs: null }
+                        ? { ...c, messages: [], ativo: false, ultimaMensagemTs: null, leadPronto: false }
                         : c
                 )
             );
@@ -244,7 +244,14 @@ export default function Conversas() {
                                             <span className="conversation-item-numero">{conv.numero}</span>
                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                         </div>
-                                        <div className="conversation-item-agent">{conv.agenteSlug}</div>
+                                        <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                                            <span>{conv.agenteSlug}</span>
+                                            {conv.leadPronto === true && (
+                                                <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>
+                                                    🔥 Lead pronto
+                                                </span>
+                                            )}
+                                        </div>
                                         {lastMsg && (
                                             <div className="conversation-item-preview">
                                                 <span className="conversation-item-role">
@@ -272,10 +279,15 @@ export default function Conversas() {
                         <>
                             {/* Chat header */}
                             <div className="conv-chat-header">
-                                <div>
-                                    <span className="conv-chat-header-numero">{selected.numero}</span>
-                                    <span className="conv-chat-header-agent">{selected.agenteSlug}</span>
-                                </div>
+                                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                                     <span className="conv-chat-header-numero" style={{ marginRight: 0 }}>{selected.numero}</span>
+                                     <span className="conv-chat-header-agent">{selected.agenteSlug}</span>
+                                     {selected.leadPronto === true && (
+                                         <span className="badge badge-warning" style={{ marginLeft: 'var(--space-2)' }}>
+                                             🔥 Lead pronto
+                                         </span>
+                                     )}
+                                 </div>
                                 <div className="conv-chat-header-actions" style={{ display: 'flex', gap: 'var(--space-2)' }}>
                                     <span className="conv-chat-header-count" style={{ display: 'flex', alignItems: 'center' }}>
                                         {selected.messages?.length || 0} mensagen{(selected.messages?.length || 0) !== 1 ? 's' : ''}
