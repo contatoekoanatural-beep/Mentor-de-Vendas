@@ -356,22 +356,34 @@ exports.webhookConverteChat = onRequest(async (request, response) => {
 
       if (leadPronto) {
         try {
-          logger.info("Disparando webhook de lead quente", { numero });
-          const responseHook = await fetch(RESPONDECHAT_WEBHOOK_LEAD, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              client_phone: numero,
-              client_name: "Lead Quente",
-            }).toString(),
-          });
-          const corpoResposta = await responseHook.text();
-          logger.info("Resposta do webhook de lead quente", {
-            status: responseHook.status,
-            corpo: corpoResposta,
-          });
+          const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+          const webhookConfig = settingsData.webhooks?.leadPronto || {};
+          const webhookUrl = webhookConfig.url || RESPONDECHAT_WEBHOOK_LEAD;
+          const webhookAtivo = webhookConfig.ativo !== false;
+
+          if (webhookAtivo && webhookUrl) {
+            logger.info("Disparando webhook de lead quente", { numero, url: webhookUrl });
+            const responseHook = await fetch(webhookUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: new URLSearchParams({
+                client_phone: numero,
+                client_name: "Lead Quente",
+              }).toString(),
+            });
+            const corpoResposta = await responseHook.text();
+            logger.info("Resposta do webhook de lead quente", {
+              status: responseHook.status,
+              corpo: corpoResposta,
+            });
+          } else {
+            logger.info("disparo lead pronto pulado: webhook inativo ou sem url", {
+              ativo: webhookAtivo,
+              hasUrl: !!webhookUrl,
+            });
+          }
         } catch (err) {
           logger.error("Erro ao disparar webhook de lead quente", err);
         }
@@ -801,22 +813,34 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
       if (leadPronto) {
         try {
-          logger.info("Disparando webhook de lead quente", { numero });
-          const responseHook = await fetch(RESPONDECHAT_WEBHOOK_LEAD, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              client_phone: numero,
-              client_name: "Lead Quente",
-            }).toString(),
-          });
-          const corpoResposta = await responseHook.text();
-          logger.info("Resposta do webhook de lead quente", {
-            status: responseHook.status,
-            corpo: corpoResposta,
-          });
+          const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+          const webhookConfig = settingsData.webhooks?.leadPronto || {};
+          const webhookUrl = webhookConfig.url || RESPONDECHAT_WEBHOOK_LEAD;
+          const webhookAtivo = webhookConfig.ativo !== false;
+
+          if (webhookAtivo && webhookUrl) {
+            logger.info("Disparando webhook de lead quente", { numero, url: webhookUrl });
+            const responseHook = await fetch(webhookUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: new URLSearchParams({
+                client_phone: numero,
+                client_name: "Lead Quente",
+              }).toString(),
+            });
+            const corpoResposta = await responseHook.text();
+            logger.info("Resposta do webhook de lead quente", {
+              status: responseHook.status,
+              corpo: corpoResposta,
+            });
+          } else {
+            logger.info("disparo lead pronto pulado: webhook inativo ou sem url", {
+              ativo: webhookAtivo,
+              hasUrl: !!webhookUrl,
+            });
+          }
         } catch (err) {
           logger.error("Erro ao disparar webhook de lead quente", err);
         }

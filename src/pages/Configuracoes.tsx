@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { getAppSettings, saveAppSettings } from '../services/firebase';
 import { setGeminiKey } from '../services/aiService';
 import { useToast } from '../contexts/ToastContext';
-import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug } from 'lucide-react';
+import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe } from 'lucide-react';
 
 export default function Configuracoes() {
     const { addToast } = useToast();
@@ -22,6 +22,12 @@ export default function Configuracoes() {
     const [showRcToken, setShowRcToken] = useState(false);
     const [isSavingRcToken, setIsSavingRcToken] = useState(false);
 
+    const [lpUrl, setLpUrl] = useState('');
+    const [lpAtivo, setLpAtivo] = useState(true);
+    const [remUrl, setRemUrl] = useState('');
+    const [remAtivo, setRemAtivo] = useState(true);
+    const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
+
     useEffect(() => {
         const loadSettings = async () => {
             try {
@@ -34,6 +40,17 @@ export default function Configuracoes() {
                 }
                 if (settings && typeof settings.respondechatToken === 'string' && settings.respondechatToken.length > 5) {
                     setHasExistingRcToken(true);
+                }
+                if (settings && settings.webhooks) {
+                    const whs = settings.webhooks as any;
+                    if (whs.leadPronto) {
+                        setLpUrl(whs.leadPronto.url || '');
+                        setLpAtivo(whs.leadPronto.ativo !== false);
+                    }
+                    if (whs.remarketing) {
+                        setRemUrl(whs.remarketing.url || '');
+                        setRemAtivo(whs.remarketing.ativo !== false);
+                    }
                 }
             } catch (error) {
                 console.error('Error loading settings:', error);
@@ -117,6 +134,29 @@ export default function Configuracoes() {
             addToast('Erro ao salvar o token do Responde Chat.', 'error');
         }
         setIsSavingRcToken(false);
+    };
+
+    const handleSaveWebhooks = async () => {
+        setIsSavingWebhooks(true);
+        try {
+            await saveAppSettings({
+                webhooks: {
+                    leadPronto: {
+                        url: lpUrl.trim(),
+                        ativo: lpAtivo
+                    },
+                    remarketing: {
+                        url: remUrl.trim(),
+                        ativo: remAtivo
+                    }
+                }
+            });
+            addToast('Configurações de Webhooks salvas com sucesso!', 'success');
+        } catch (error) {
+            console.error('Error saving webhooks:', error);
+            addToast('Erro ao salvar as configurações de Webhooks.', 'error');
+        }
+        setIsSavingWebhooks(false);
     };
 
     return (
@@ -461,6 +501,111 @@ export default function Configuracoes() {
                 >
                     <Save size={16} />
                     <span>{isSavingRcToken ? 'Salvando...' : 'Salvar token'}</span>
+                </button>
+            </div>
+
+            {/* Webhooks Section */}
+            <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                    <div style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '50%',
+                        background: 'var(--bg-card-elevated)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'var(--primary)',
+                    }}>
+                        <Globe size={20} />
+                    </div>
+                    <div>
+                        <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                            Configurações de Webhooks
+                        </h3>
+                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                            Configure os endpoints de webhook para envio de eventos externos.
+                        </p>
+                    </div>
+                </div>
+
+                {/* Webhook Lead Pronto */}
+                <div style={{ marginBottom: 'var(--spacing-lg)', paddingBottom: 'var(--spacing-md)', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                        <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+                            Lead Pronto
+                        </label>
+                        <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
+                            <input
+                                type="checkbox"
+                                checked={lpAtivo}
+                                onChange={(e) => setLpAtivo(e.target.checked)}
+                            />
+                            <span>Ativo</span>
+                        </label>
+                    </div>
+                    <input
+                        type="text"
+                        value={lpUrl}
+                        onChange={(e) => setLpUrl(e.target.value)}
+                        placeholder="https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE"
+                        disabled={isSavingWebhooks}
+                        style={{
+                            width: '100%',
+                            padding: '12px',
+                            background: 'var(--bg-input)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 'var(--radius-md)',
+                            color: 'var(--text-primary)',
+                            fontSize: 'var(--text-sm)',
+                            fontFamily: 'var(--font-mono)',
+                        }}
+                    />
+                </div>
+
+                {/* Webhook Remarketing */}
+                <div style={{ marginBottom: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                        <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+                            Remarketing
+                        </label>
+                        <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
+                            <input
+                                type="checkbox"
+                                checked={remAtivo}
+                                onChange={(e) => setRemAtivo(e.target.checked)}
+                            />
+                            <span>Ativo</span>
+                        </label>
+                    </div>
+                    <input
+                        type="text"
+                        value={remUrl}
+                        onChange={(e) => setRemUrl(e.target.value)}
+                        placeholder="https://"
+                        disabled={isSavingWebhooks}
+                        style={{
+                            width: '100%',
+                            padding: '12px',
+                            background: 'var(--bg-input)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 'var(--radius-md)',
+                            color: 'var(--text-primary)',
+                            fontSize: 'var(--text-sm)',
+                            fontFamily: 'var(--font-mono)',
+                        }}
+                    />
+                </div>
+
+                {/* Save button */}
+                <button
+                    onClick={handleSaveWebhooks}
+                    className="btn btn-primary"
+                    disabled={isSavingWebhooks}
+                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                >
+                    <Save size={16} />
+                    <span>{isSavingWebhooks ? 'Salvando...' : 'Salvar Webhooks'}</span>
                 </button>
             </div>
         </div>
