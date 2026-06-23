@@ -27,7 +27,7 @@ if (!admin.apps.length) admin.initializeApp();
 // this will be the maximum concurrent request count.
 setGlobalOptions({ maxInstances: 10 });
 
-const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/SO1i3lkKlRoiNbH7z2HCT0KrwQ5hsFWxDObKYpFL6y";
+const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE";
 
 // ----------------------------------------
 // ping — Cloud Function de teste
@@ -360,16 +360,17 @@ exports.webhookConverteChat = onRequest(async (request, response) => {
           const responseHook = await fetch(RESPONDECHAT_WEBHOOK_LEAD, {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
+              "Content-Type": "application/x-www-form-urlencoded",
             },
-            body: JSON.stringify({
+            body: new URLSearchParams({
               client_phone: numero,
               client_name: "Lead Quente",
-            }),
+            }).toString(),
           });
+          const corpoResposta = await responseHook.text();
           logger.info("Resposta do webhook de lead quente", {
             status: responseHook.status,
-            statusText: responseHook.statusText,
+            corpo: corpoResposta,
           });
         } catch (err) {
           logger.error("Erro ao disparar webhook de lead quente", err);
@@ -804,16 +805,17 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
           const responseHook = await fetch(RESPONDECHAT_WEBHOOK_LEAD, {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
+              "Content-Type": "application/x-www-form-urlencoded",
             },
-            body: JSON.stringify({
+            body: new URLSearchParams({
               client_phone: numero,
               client_name: "Lead Quente",
-            }),
+            }).toString(),
           });
+          const corpoResposta = await responseHook.text();
           logger.info("Resposta do webhook de lead quente", {
             status: responseHook.status,
-            statusText: responseHook.statusText,
+            corpo: corpoResposta,
           });
         } catch (err) {
           logger.error("Erro ao disparar webhook de lead quente", err);
