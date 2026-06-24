@@ -189,6 +189,7 @@ exports.webhookConverteChat = onRequest(async (request, response) => {
           numero,
           agenteSlug,
           status: "ativa",
+          remarketingEnviado: false,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -217,6 +218,7 @@ exports.webhookConverteChat = onRequest(async (request, response) => {
         agenteSlug,
         status: "ativa",
         ultimaMensagemTs: meuTs,
+        remarketingEnviado: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -647,6 +649,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
           numero,
           agenteSlug,
           status: "ativa",
+          remarketingEnviado: false,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -675,6 +678,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         agenteSlug,
         status: "ativa",
         ultimaMensagemTs: meuTs,
+        remarketingEnviado: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }

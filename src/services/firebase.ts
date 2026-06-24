@@ -578,6 +578,7 @@ export const resetConversation = (id: string) =>
         ativo: false,
         ultimaMensagemTs: null,
         leadPronto: false,
+        remarketingEnviado: false,
         updatedAt: serverTimestamp()
     });
 
