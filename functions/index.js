@@ -1009,6 +1009,9 @@ exports.ativarAgente = onRequest(async (request, response) => {
     const convSnap = await convRef.get();
     const jaTemMensagens = convSnap.exists && Array.isArray(convSnap.data()?.messages) && convSnap.data().messages.length > 0;
 
+    // Verificar se já possui o campo criadoEm
+    const jaTemCriadoEm = convSnap.exists && convSnap.data()?.criadoEm !== undefined;
+
     const payload = {
       ativo: true,
       numero: numeroNormalizado,
@@ -1018,6 +1021,11 @@ exports.ativarAgente = onRequest(async (request, response) => {
 
     if (!jaTemMensagens) {
       payload.status = "pendente";
+    }
+
+    // Gravar criadoEm apenas se não existir ainda (imutável)
+    if (!jaTemCriadoEm) {
+      payload.criadoEm = Date.now();
     }
 
     await convRef.set(payload, { merge: true });
