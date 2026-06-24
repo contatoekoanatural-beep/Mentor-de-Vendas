@@ -28,6 +28,7 @@ if (!admin.apps.length) admin.initializeApp();
 setGlobalOptions({ maxInstances: 10 });
 
 const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE";
+const REMARKETING_THRESHOLD_HORAS = 22;
 
 // ----------------------------------------
 // ping — Cloud Function de teste
@@ -1049,3 +1050,170 @@ exports.ativarAgente = onRequest(async (request, response) => {
     });
   }
 });
+
+// ----------------------------------------
+// verificarRemarketing — Cloud Function para processar o remarketing
+// ----------------------------------------
+exports.verificarRemarketing = onRequest(async (request, response) => {
+  try {
+    const result = await processarRemarketing();
+    return response.status(200).json(result);
+  } catch (err) {
+    logger.error("verificarRemarketing — excecao", {
+      error: String(err),
+      stack: err.stack,
+    });
+    return response.status(500).json({
+      error: "excecao",
+      detalhe: String(err),
+    });
+  }
+});
+
+/**
+ * Processa o remarketing varrendo as conversas no Firestore.
+ * @return {Promise<Object>} Resumo do processamento.
+ */
+async function processarRemarketing() {
+  logger.info("processarRemarketing — iniciando varredura");
+
+  const settingsSnap = await admin.firestore().doc("settings/app").get();
+  const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+  const webhookConfig = settingsData.webhooks?.remarketing || {};
+  const webhookUrl = webhookConfig.url || "";
+  const webhookAtivo = webhookConfig.ativo !== false;
+
+  if (!webhookAtivo || !webhookUrl) {
+    logger.info("processarRemarketing — webhook inativo ou sem URL", {
+      ativo: webhookAtivo,
+      hasUrl: !!webhookUrl,
+    });
+    return {
+      status: "webhook_inativo_ou_sem_url",
+      ativo: webhookAtivo,
+      hasUrl: !!webhookUrl,
+    };
+  }
+
+  const conversationsSnap = await admin
+    .firestore()
+    .collection("conversations")
+    .get();
+
+  logger.info("processarRemarketing — total de conversas", {
+    total: conversationsSnap.size,
+  });
+
+  const thresholdMs = REMARKETING_THRESHOLD_HORAS * 60 * 60 * 1000;
+  const agora = Date.now();
+  let analisadas = 0;
+  let processadas = 0;
+  let falhas = 0;
+
+  for (const doc of conversationsSnap.docs) {
+    const data = doc.data();
+    analisadas++;
+
+    if (data.leadPronto === true || data.remarketingEnviado === true) {
+      continue;
+    }
+
+    let ancora = null;
+
+    if (Array.isArray(data.messages) && data.messages.length > 0) {
+      for (let i = data.messages.length - 1; i >= 0; i--) {
+        if (data.messages[i].role === "user" &&
+            typeof data.messages[i].ts === "number") {
+          ancora = data.messages[i].ts;
+          break;
+        }
+      }
+    }
+
+    if (ancora === null && typeof data.criadoEm === "number") {
+      ancora = data.criadoEm;
+    }
+
+    if (ancora === null) {
+      continue;
+    }
+
+    if ((agora - ancora) < thresholdMs) {
+      continue;
+    }
+
+    let numero = data.numero || "";
+    if (!numero) {
+      const partes = doc.id.split("_");
+      numero = partes[0].replace(/\D/g, "");
+    }
+
+    if (!numero) {
+      logger.warn("processarRemarketing — numero nao identificado", {
+        docId: doc.id,
+      });
+      continue;
+    }
+
+    try {
+      logger.info("processarRemarketing — disparando webhook", {
+        numero,
+        docId: doc.id,
+      });
+
+      const responseHook = await fetch(webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          client_phone: numero,
+          client_name: "Lead Remarketing",
+        }).toString(),
+      });
+
+      const corpoResposta = await responseHook.text();
+
+      if (responseHook.status >= 200 && responseHook.status < 300) {
+        logger.info("processarRemarketing — sucesso no webhook", {
+          numero,
+          status: responseHook.status,
+          corpo: corpoResposta,
+        });
+
+        await doc.ref.set({
+          remarketingEnviado: true,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+
+        processadas++;
+      } else {
+        logger.warn("processarRemarketing — falha no webhook", {
+          numero,
+          status: responseHook.status,
+          corpo: corpoResposta,
+        });
+        falhas++;
+      }
+    } catch (err) {
+      logger.error("processarRemarketing — erro webhook", {
+        numero,
+        error: String(err),
+      });
+      falhas++;
+    }
+  }
+
+  logger.info("processarRemarketing — concluido", {
+    analisadas,
+    processadas,
+    falhas,
+  });
+
+  return {
+    status: "concluido",
+    analisadas,
+    processadas,
+    falhas,
+  };
+}
