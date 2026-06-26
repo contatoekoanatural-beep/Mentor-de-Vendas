@@ -1090,6 +1090,8 @@ async function processarRemarketing() {
   const webhookConfig = settingsData.webhooks?.remarketing || {};
   const webhookUrl = webhookConfig.url || "";
   const webhookAtivo = webhookConfig.ativo !== false;
+  const modoTeste = webhookConfig.modoTeste === true;
+  const numeroTeste = webhookConfig.numeroTeste || "";
 
   if (!webhookAtivo || !webhookUrl) {
     logger.info("processarRemarketing — webhook inativo ou sem URL", {
@@ -1100,6 +1102,15 @@ async function processarRemarketing() {
       status: "webhook_inativo_ou_sem_url",
       ativo: webhookAtivo,
       hasUrl: !!webhookUrl,
+    };
+  }
+
+  if (modoTeste && !numeroTeste) {
+    logger.warn("processarRemarketing — modo teste ativo, mas numeroTeste vazio. Abortando.");
+    return {
+      status: "modo_teste_sem_numero",
+      modoTeste,
+      numeroTeste,
     };
   }
 
@@ -1160,6 +1171,10 @@ async function processarRemarketing() {
       logger.warn("processarRemarketing — numero nao identificado", {
         docId: doc.id,
       });
+      continue;
+    }
+
+    if (modoTeste && numero !== numeroTeste) {
       continue;
     }
 
