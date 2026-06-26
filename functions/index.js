@@ -9,6 +9,7 @@
 
 const {setGlobalOptions} = require("firebase-functions");
 const {onRequest} = require("firebase-functions/https");
+const {onSchedule} = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
@@ -1056,23 +1057,26 @@ exports.ativarAgente = onRequest(async (request, response) => {
 });
 
 // ----------------------------------------
-// verificarRemarketing — Cloud Function para processar o remarketing
+// verificarRemarketingAgendado — Cloud Function agendada para processar o remarketing
 // ----------------------------------------
-exports.verificarRemarketing = onRequest(async (request, response) => {
-  try {
-    const result = await processarRemarketing();
-    return response.status(200).json(result);
-  } catch (err) {
-    logger.error("verificarRemarketing — excecao", {
-      error: String(err),
-      stack: err.stack,
-    });
-    return response.status(500).json({
-      error: "excecao",
-      detalhe: String(err),
-    });
+exports.verificarRemarketingAgendado = onSchedule(
+  {
+    schedule: "every 1 hours",
+    timeZone: "America/Sao_Paulo",
+    region: "us-central1",
+  },
+  async (event) => {
+    try {
+      const result = await processarRemarketing();
+      logger.info("verificarRemarketingAgendado — concluido", result);
+    } catch (err) {
+      logger.error("verificarRemarketingAgendado — excecao", {
+        error: String(err),
+        stack: err.stack,
+      });
+    }
   }
-});
+);
 
 /**
  * Processa o remarketing varrendo as conversas no Firestore.
