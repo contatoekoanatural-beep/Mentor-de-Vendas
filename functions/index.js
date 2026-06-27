@@ -717,6 +717,13 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
     // 17. Se não é texto (áudio/mídia): responder pedindo texto sem chamar Gemini
     if (!texto) {
+      logger.info("DIAG_AUDIO_PAYLOAD", {
+        numero,
+        body: JSON.stringify(request.body),
+        raw: request.body?.message?.raw || null,
+        audioMessage: request.body?.message?.raw?.message?.audioMessage || request.body?.message?.raw?.audioMessage || null
+      });
+
       const respostaAudio = "Oi! 😊 No momento consigo te entender melhor por mensagem escrita. Pode me mandar sua dúvida em texto, por favor?";
       const agora = Date.now();
 
