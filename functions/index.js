@@ -959,7 +959,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     for (let i = 0; i < mensagens.length; i++) {
       // Delay de 1.2s entre mensagens (não antes da primeira)
       if (i > 0) {
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 3000));
       }
 
       try {
