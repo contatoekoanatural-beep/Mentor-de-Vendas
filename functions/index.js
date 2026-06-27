@@ -638,6 +638,8 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       ? convSnap.data().messages
       : [];
 
+    let iaAcionadaEnviado = convSnap.exists ? !!convSnap.data().iaAcionadaEnviado : false;
+
     // 12. Checar interruptor: só responde se ativo === true
     const ativo = convSnap.exists && convSnap.data().ativo === true;
 
@@ -706,6 +708,8 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       historicoAtualizado = convSnap2.exists && Array.isArray(convSnap2.data().messages)
         ? convSnap2.data().messages
         : [];
+
+      iaAcionadaEnviado = convSnap2.exists ? !!convSnap2.data().iaAcionadaEnviado : false;
     }
 
     let mensagens;
@@ -892,6 +896,48 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         respostaCrua,
         mensagens,
       });
+    }
+
+    // Webhook "IA acionada" — Dispara apenas uma vez por conversa
+    if (!iaAcionadaEnviado) {
+      try {
+        const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+        const webhookConfig = settingsData.webhooks?.iaAcionada || {};
+        const webhookUrl = webhookConfig.url;
+        const webhookAtivo = webhookConfig.ativo !== false;
+
+        if (webhookAtivo && webhookUrl) {
+          logger.info("Disparando webhook de IA acionada", { numero, url: webhookUrl });
+          const responseHook = await fetch(webhookUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              client_phone: numero,
+              client_name: "Lead IA",
+            }).toString(),
+          });
+          const corpoResposta = await responseHook.text();
+          logger.info("Resposta do webhook de IA acionada", {
+            status: responseHook.status,
+            corpo: corpoResposta,
+          });
+
+          if (responseHook.status >= 200 && responseHook.status < 300) {
+            await convRef.set({ iaAcionadaEnviado: true }, { merge: true });
+            iaAcionadaEnviado = true;
+            logger.info("Webhook IA acionada registrado como enviado para esta conversa", { numero });
+          }
+        } else {
+          logger.info("Disparo IA acionada pulado: webhook inativo ou sem URL", {
+            ativo: webhookAtivo,
+            hasUrl: !!webhookUrl,
+          });
+        }
+      } catch (err) {
+        logger.error("Erro ao disparar webhook de IA acionada", err);
+      }
     }
 
     // 19. Ler token do Responde Chat (reaproveitando settingsSnap já lido)

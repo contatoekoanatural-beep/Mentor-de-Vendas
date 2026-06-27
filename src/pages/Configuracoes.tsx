@@ -26,6 +26,8 @@ export default function Configuracoes() {
     const [lpAtivo, setLpAtivo] = useState(true);
     const [remUrl, setRemUrl] = useState('');
     const [remAtivo, setRemAtivo] = useState(true);
+    const [iaUrl, setIaUrl] = useState('');
+    const [iaAtivo, setIaAtivo] = useState(true);
     const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
 
     useEffect(() => {
@@ -50,6 +52,10 @@ export default function Configuracoes() {
                     if (whs.remarketing) {
                         setRemUrl(whs.remarketing.url || '');
                         setRemAtivo(whs.remarketing.ativo !== false);
+                    }
+                    if (whs.iaAcionada) {
+                        setIaUrl(whs.iaAcionada.url || '');
+                        setIaAtivo(whs.iaAcionada.ativo !== false);
                     }
                 }
             } catch (error) {
@@ -140,15 +146,17 @@ export default function Configuracoes() {
         setIsSavingWebhooks(true);
         try {
             await saveAppSettings({
-                webhooks: {
-                    leadPronto: {
-                        url: lpUrl.trim(),
-                        ativo: lpAtivo
-                    },
-                    remarketing: {
-                        url: remUrl.trim(),
-                        ativo: remAtivo
-                    }
+                "webhooks.leadPronto": {
+                    url: lpUrl.trim(),
+                    ativo: lpAtivo
+                },
+                "webhooks.remarketing": {
+                    url: remUrl.trim(),
+                    ativo: remAtivo
+                },
+                "webhooks.iaAcionada": {
+                    url: iaUrl.trim(),
+                    ativo: iaAtivo
                 }
             });
             addToast('Configurações de Webhooks salvas com sucesso!', 'success');
@@ -564,7 +572,7 @@ export default function Configuracoes() {
                 </div>
 
                 {/* Webhook Remarketing */}
-                <div style={{ marginBottom: 'var(--spacing-lg)' }}>
+                <div style={{ marginBottom: 'var(--spacing-lg)', paddingBottom: 'var(--spacing-md)', borderBottom: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
                         <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
                             Remarketing
@@ -582,6 +590,40 @@ export default function Configuracoes() {
                         type="text"
                         value={remUrl}
                         onChange={(e) => setRemUrl(e.target.value)}
+                        placeholder="https://"
+                        disabled={isSavingWebhooks}
+                        style={{
+                            width: '100%',
+                            padding: '12px',
+                            background: 'var(--bg-input)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 'var(--radius-md)',
+                            color: 'var(--text-primary)',
+                            fontSize: 'var(--text-sm)',
+                            fontFamily: 'var(--font-mono)',
+                        }}
+                    />
+                </div>
+
+                {/* Webhook IA Acionada */}
+                <div style={{ marginBottom: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                        <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+                            IA Acionada
+                        </label>
+                        <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
+                            <input
+                                type="checkbox"
+                                checked={iaAtivo}
+                                onChange={(e) => setIaAtivo(e.target.checked)}
+                            />
+                            <span>Ativo</span>
+                        </label>
+                    </div>
+                    <input
+                        type="text"
+                        value={iaUrl}
+                        onChange={(e) => setIaUrl(e.target.value)}
                         placeholder="https://"
                         disabled={isSavingWebhooks}
                         style={{
