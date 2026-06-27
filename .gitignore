@@ -30,3 +30,6 @@ functions_backup_extracted/
 *.njsproj
 *.sln
 *.sw?
+
+# Backups de conversas (dados sensíveis de clientes)
+backup_conversations_*.json
