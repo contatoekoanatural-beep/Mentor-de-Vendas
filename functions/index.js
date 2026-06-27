@@ -595,6 +595,74 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
               "";
     }
 
+    // --- TRANSCRIÇÃO DE ÁUDIO (Gatilho) ---
+    const isAudio = request.body.message?.type === "audio" && request.body.message?.mediaUrl;
+    let transcricaoSucesso = false;
+
+    if (isAudio) {
+      try {
+        const mediaUrl = request.body.message.mediaUrl;
+        logger.info("webhookRespondeChat — baixando audio para transcricao", { numero, mediaUrl });
+
+        const audioRes = await fetch(mediaUrl);
+        if (!audioRes.ok) {
+          throw new Error(`Falha ao baixar o audio. Status: ${audioRes.status}`);
+        }
+
+        const audioBuffer = await audioRes.arrayBuffer();
+        const base64Audio = Buffer.from(audioBuffer).toString("base64");
+
+        logger.info("webhookRespondeChat — enviando audio para transcricao no Gemini", { numero });
+        const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+        
+        const transResponse = await fetch(`${geminiUrl}?key=${geminiApiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: "audio/mpeg",
+                    data: base64Audio
+                  }
+                },
+                {
+                  text: "Transcreva exatamente o que foi dito neste áudio, em português. Responda apenas com a transcrição, sem comentários."
+                }
+              ]
+            }]
+          })
+        });
+
+        if (!transResponse.ok) {
+          const errBody = await transResponse.text();
+          throw new Error(`Erro na API Gemini de Transcricao: ${transResponse.status} - ${errBody}`);
+        }
+
+        const transData = await transResponse.json();
+        const transcricao = transData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+        if (transcricao.trim()) {
+          logger.info("webhookRespondeChat — transcricao concluida", { numero, transcricao: transcricao.trim() });
+          texto = transcricao.trim();
+          transcricaoSucesso = true;
+        } else {
+          logger.warn("webhookRespondeChat — transcricao retornou vazia");
+        }
+      } catch (errTrans) {
+        logger.error("webhookRespondeChat — erro durante o processo de transcricao de audio", {
+          error: String(errTrans),
+          stack: errTrans.stack
+        });
+      }
+
+      // Se a transcricao falhar por qualquer razao, limpamos o texto para forcar o fallback
+      if (!transcricaoSucesso) {
+        texto = "";
+      }
+    }
+
     // 8. Validar slug e buscar agente por slug no Firestore
     if (!agenteSlug) {
       logger.info("webhookRespondeChat — sem slug na URL");
