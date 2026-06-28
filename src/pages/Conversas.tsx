@@ -2,7 +2,7 @@
 // Conversas Page - Read-only Conversation Viewer
 // ========================================
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
@@ -72,6 +72,17 @@ export default function Conversas() {
     const [saving, setSaving] = useState(false);
     const [pendentesExpanded, setPendentesExpanded] = useState(false);
 
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    const selected = conversations.find((c) => c.id === selectedId) || null;
+
+    const pendentes = conversations.filter(
+        (conv) => conv.status === 'pendente' && (!conv.messages || conv.messages.length === 0)
+    );
+    const normais = conversations.filter(
+        (conv) => !(conv.status === 'pendente' && (!conv.messages || conv.messages.length === 0))
+    );
+
     // Subscribe to conversations in real time on mount
     useEffect(() => {
         setLoading(true);
@@ -90,14 +101,12 @@ export default function Conversas() {
         };
     }, []);
 
-    const selected = conversations.find((c) => c.id === selectedId) || null;
+    // Auto-scroll to the bottom of the chat when selecting a conversation or when new messages arrive
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }, [selectedId, selected?.messages?.length]);
 
-    const pendentes = conversations.filter(
-        (conv) => conv.status === 'pendente' && (!conv.messages || conv.messages.length === 0)
-    );
-    const normais = conversations.filter(
-        (conv) => !(conv.status === 'pendente' && (!conv.messages || conv.messages.length === 0))
-    );
+
 
     // Toggle ativo field
     const toggleAtivo = async () => {
@@ -359,6 +368,8 @@ export default function Conversas() {
                                         </div>
                                     );
                                 })}
+                                {/* Anchor element for auto-scroll */}
+                                <div ref={messagesEndRef} />
                             </div>
                         </>
                     )}
