@@ -2,7 +2,6 @@
 // Topbar Component
 // ========================================
 
-import { Search } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 interface TopbarProps {
@@ -28,13 +27,6 @@ export default function Topbar({ onCreateClick: _ }: TopbarProps) {
                 </h1>
             </div>
 
-            <div className="topbar-actions">
-                {/* Search */}
-                <div className="topbar-search">
-                    <Search size={18} style={{ color: 'var(--color-text-muted)' }} />
-                    <input type="text" placeholder="Buscar..." />
-                </div>
-            </div>
         </header>
     );
 }

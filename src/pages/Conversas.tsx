@@ -273,7 +273,23 @@ export default function Conversas() {
                                                         onClick={() => setSelectedId(conv.id)}
                                                     >
                                                         <div className="conversation-item-top">
-                                                            <span className="conversation-item-numero">{conv.numero}</span>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                                                                <span 
+                                                                    style={{
+                                                                        width: '8px',
+                                                                        height: '8px',
+                                                                        borderRadius: '50%',
+                                                                        backgroundColor: conv.ativo === true ? '#22c55e' : '#9ca3af',
+                                                                        display: 'inline-block',
+                                                                        flexShrink: 0
+                                                                    }}
+                                                                    title={conv.ativo === true ? 'IA Ligada' : 'IA Desligada'}
+                                                                />
+                                                                <span className="conversation-item-numero">{conv.numero}</span>
+                                                                {conv.leadPronto === true && (
+                                                                    <span title="Lead Pronto" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center' }}>🔥</span>
+                                                                )}
+                                                            </div>
                                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                                         </div>
                                                         <div className="conversation-item-agent">{conv.agenteSlug}</div>
@@ -299,7 +315,23 @@ export default function Conversas() {
                                         onClick={() => setSelectedId(conv.id)}
                                     >
                                         <div className="conversation-item-top">
-                                            <span className="conversation-item-numero">{conv.numero}</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                                                <span 
+                                                    style={{
+                                                        width: '8px',
+                                                        height: '8px',
+                                                        borderRadius: '50%',
+                                                        backgroundColor: conv.ativo === true ? '#22c55e' : '#9ca3af',
+                                                        display: 'inline-block',
+                                                        flexShrink: 0
+                                                    }}
+                                                    title={conv.ativo === true ? 'IA Ligada' : 'IA Desligada'}
+                                                />
+                                                <span className="conversation-item-numero">{conv.numero}</span>
+                                                {conv.leadPronto === true && (
+                                                    <span title="Lead Pronto" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center' }}>🔥</span>
+                                                )}
+                                            </div>
                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                         </div>
                                         <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
