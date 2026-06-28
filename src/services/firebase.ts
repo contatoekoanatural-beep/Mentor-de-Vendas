@@ -27,6 +27,7 @@ import {
     orderBy,
     Timestamp,
     serverTimestamp,
+    onSnapshot,
 } from 'firebase/firestore';
 import type { DocumentData, QueryConstraint } from 'firebase/firestore';
 import {
@@ -568,6 +569,21 @@ export async function saveAppSettings(data: Record<string, unknown>): Promise<vo
 // ----------------------------------------
 export const getConversations = () =>
     getDocuments<Conversation>(COLLECTIONS.conversations);
+
+export const subscribeConversations = (
+    callback: (conversations: WithId<Conversation>[]) => void
+) => {
+    const q = query(collection(db, COLLECTIONS.conversations));
+    return onSnapshot(q, (snapshot) => {
+        const conversations = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data()
+        } as WithId<Conversation>));
+        callback(conversations);
+    }, (error) => {
+        console.error("Erro no listener de conversas:", error);
+    });
+};
 
 export const setConversationAtivo = (id: string, ativo: boolean) =>
     updateDocument(COLLECTIONS.conversations, id, { ativo });

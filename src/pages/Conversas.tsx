@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { getConversations, setConversationAtivo, resetConversation } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations } from '../services/firebase';
 
 // ----------------------------------------
 // Helpers
@@ -72,23 +72,22 @@ export default function Conversas() {
     const [saving, setSaving] = useState(false);
     const [pendentesExpanded, setPendentesExpanded] = useState(false);
 
-    // Load conversations once on mount
+    // Subscribe to conversations in real time on mount
     useEffect(() => {
-        const load = async () => {
-            setLoading(true);
-            try {
-                const data = await getConversations();
-                // Sort in memory by updatedAt descending
-                const sorted = [...data].sort((a, b) => {
-                    return toMillis(b.updatedAt) - toMillis(a.updatedAt);
-                });
-                setConversations(sorted);
-            } catch (error) {
-                console.error('Erro ao carregar conversas:', error);
-            }
+        setLoading(true);
+        const unsubscribe = subscribeConversations((data) => {
+            // Sort in memory by updatedAt descending
+            const sorted = [...data].sort((a, b) => {
+                return toMillis(b.updatedAt) - toMillis(a.updatedAt);
+            });
+            setConversations(sorted);
             setLoading(false);
+        });
+
+        // Cleanup listener on unmount
+        return () => {
+            unsubscribe();
         };
-        load();
     }, []);
 
     const selected = conversations.find((c) => c.id === selectedId) || null;
