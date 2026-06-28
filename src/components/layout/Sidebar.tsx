@@ -4,7 +4,7 @@
 
 import { NavLink } from 'react-router-dom';
 import {
-    Package,
+    Bot,
     MessageSquare,
     Settings,
     LogOut,
@@ -12,7 +12,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 
 const navItems = [
-    { path: '/produtos', label: 'Agentes', icon: Package, ownerOnly: false },
+    { path: '/produtos', label: 'Agentes', icon: Bot, ownerOnly: false },
     { path: '/conversas', label: 'Conversas', icon: MessageSquare, ownerOnly: false },
     { path: '/configuracoes', label: 'Configurações', icon: Settings, ownerOnly: false },
 ];
