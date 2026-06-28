@@ -573,16 +573,6 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       return response.status(200).json({ ignored: true, reason: "numero_nao_encontrado" });
     }
 
-    // LOG DE DIAGNÓSTICO TEMPORÁRIO PARA CAPTURAR PAYLOAD DE ÁUDIO/MÍDIA
-    if (numero === "555197081880") {
-      logger.info("DIAG_AUDIO_PAYLOAD", {
-        numero,
-        body: JSON.stringify(request.body),
-        raw: request.body?.message?.raw || null,
-        audioMessage: request.body?.message?.raw?.message?.audioMessage || request.body?.message?.raw?.audioMessage || null
-      });
-    }
-
     const agenteSlug = request.query.agente || null;
 
     // 7. Extrair texto da mensagem
