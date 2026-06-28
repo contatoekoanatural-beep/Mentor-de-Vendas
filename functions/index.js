@@ -709,7 +709,12 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     let iaAcionadaEnviado = convSnap.exists ? !!convSnap.data().iaAcionadaEnviado : false;
 
     // 12. Checar interruptor: só responde se ativo === true
-    const ativo = convSnap.exists && convSnap.data().ativo === true;
+    let ativo = convSnap.exists && convSnap.data().ativo === true;
+    const estavaArquivada = convSnap.exists && convSnap.data().arquivada === true;
+
+    if (estavaArquivada) {
+      ativo = true; // Força ativo=true na memória para seguir ao Caminho B e responder de imediato
+    }
 
     if (!ativo) {
       // Gravar a mensagem do cliente no histórico (para visibilidade na bancada)
@@ -742,18 +747,22 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
     historico.push({ role: "user", text: textoParaHistorico, ts: meuTs });
 
-    await convRef.set(
-      {
-        messages: historico,
-        numero,
-        agenteSlug,
-        status: "ativa",
-        ultimaMensagemTs: meuTs,
-        remarketingEnviado: false,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    const payloadCaminhoB = {
+      messages: historico,
+      numero,
+      agenteSlug,
+      status: "ativa",
+      ultimaMensagemTs: meuTs,
+      remarketingEnviado: false,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (estavaArquivada) {
+      payloadCaminhoB.arquivada = false;
+      payloadCaminhoB.ativo = true;
+    }
+
+    await convRef.set(payloadCaminhoB, { merge: true });
 
     let historicoAtualizado = historico;
 
