@@ -3,10 +3,10 @@
 // ========================================
 
 import { useEffect, useState, useRef } from 'react';
-import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search } from 'lucide-react';
+import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { setConversationAtivo, resetConversation, subscribeConversations } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada } from '../services/firebase';
 
 // ----------------------------------------
 // Helpers
@@ -72,14 +72,24 @@ export default function Conversas() {
     const [saving, setSaving] = useState(false);
     const [pendentesExpanded, setPendentesExpanded] = useState(false);
     const [busca, setBusca] = useState('');
+    const [abaAtiva, setAbaAtiva] = useState<'ativas' | 'arquivados'>('ativas');
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const selected = conversations.find((c) => c.id === selectedId) || null;
 
+    // Contagem de conversas por aba
+    const totalAtivas = conversations.filter(c => c.arquivada !== true).length;
+    const totalArquivadas = conversations.filter(c => c.arquivada === true).length;
+
+    // Filtragem por aba ativa
+    const tabConversations = conversations.filter(c => 
+        abaAtiva === 'ativas' ? c.arquivada !== true : c.arquivada === true
+    );
+
     // Filtro de busca local por telefone
     const cleanSearch = busca.replace(/\D/g, '');
-    const filteredConversations = conversations.filter(conv => {
+    const filteredConversations = tabConversations.filter(conv => {
         if (!cleanSearch) return true;
         const cleanNumero = (conv.numero || '').replace(/\D/g, '');
         return cleanNumero.includes(cleanSearch);
@@ -132,6 +142,25 @@ export default function Conversas() {
             );
         } catch (error) {
             console.error('Erro ao alterar estado da IA:', error);
+        }
+        setSaving(false);
+    };
+
+    // Toggle arquivada field
+    const toggleArquivada = async () => {
+        if (!selected || saving) return;
+        const novoArquivada = !(selected.arquivada === true);
+        setSaving(true);
+        try {
+            await setConversationArquivada(selected.id, novoArquivada);
+            // Update local state immediately
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id === selected.id ? { ...c, arquivada: novoArquivada } : c
+                )
+            );
+        } catch (error) {
+            console.error('Erro ao alterar estado de arquivamento:', error);
         }
         setSaving(false);
     };
@@ -189,6 +218,70 @@ export default function Conversas() {
             <div className="conversations-layout">
                 {/* Left column: conversation list */}
                 <div className="conversations-list">
+                    {/* Abas Ativas / Arquivados */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-card, #fff)' }}>
+                        <button
+                            onClick={() => setAbaAtiva('ativas')}
+                            style={{
+                                flex: 1,
+                                padding: '12px 8px',
+                                border: 'none',
+                                borderBottom: abaAtiva === 'ativas' ? '2px solid var(--primary-color, #2563eb)' : '2px solid transparent',
+                                background: 'transparent',
+                                color: abaAtiva === 'ativas' ? 'var(--text-main, #1f2937)' : 'var(--text-muted, #6b7280)',
+                                fontWeight: abaAtiva === 'ativas' ? '600' : '500',
+                                fontSize: '0.875rem',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                display: 'flex',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                gap: '6px'
+                            }}
+                        >
+                            <span>Ativas</span>
+                            <span style={{
+                                fontSize: '0.75rem',
+                                background: abaAtiva === 'ativas' ? 'rgba(37, 99, 235, 0.1)' : 'var(--bg-hover, #f3f4f6)',
+                                padding: '2px 6px',
+                                borderRadius: '10px',
+                                color: abaAtiva === 'ativas' ? 'var(--primary-color, #2563eb)' : 'var(--text-muted, #6b7280)'
+                            }}>
+                                {totalAtivas}
+                            </span>
+                        </button>
+                        <button
+                            onClick={() => setAbaAtiva('arquivados')}
+                            style={{
+                                flex: 1,
+                                padding: '12px 8px',
+                                border: 'none',
+                                borderBottom: abaAtiva === 'arquivados' ? '2px solid var(--primary-color, #2563eb)' : '2px solid transparent',
+                                background: 'transparent',
+                                color: abaAtiva === 'arquivados' ? 'var(--text-main, #1f2937)' : 'var(--text-muted, #6b7280)',
+                                fontWeight: abaAtiva === 'arquivados' ? '600' : '500',
+                                fontSize: '0.875rem',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                display: 'flex',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                gap: '6px'
+                            }}
+                        >
+                            <span>Arquivados</span>
+                            <span style={{
+                                fontSize: '0.75rem',
+                                background: abaAtiva === 'arquivados' ? 'rgba(37, 99, 235, 0.1)' : 'var(--bg-hover, #f3f4f6)',
+                                padding: '2px 6px',
+                                borderRadius: '10px',
+                                color: abaAtiva === 'arquivados' ? 'var(--primary-color, #2563eb)' : 'var(--text-muted, #6b7280)'
+                            }}>
+                                {totalArquivadas}
+                            </span>
+                        </button>
+                    </div>
+
                     {/* Campo de Busca local */}
                     <div className="conversations-search-bar" style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-color)' }}>
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -233,7 +326,13 @@ export default function Conversas() {
                     {filteredConversations.length === 0 ? (
                         <div className="conversations-empty-list">
                             <MessageSquare size={32} />
-                            <p>{conversations.length === 0 ? 'Nenhuma conversa encontrada.' : 'Nenhum resultado para a busca.'}</p>
+                            <p>
+                                {busca 
+                                    ? 'Nenhum resultado para a busca.' 
+                                    : abaAtiva === 'ativas' 
+                                        ? 'Nenhuma conversa ativa.' 
+                                        : 'Nenhuma conversa arquivada.'}
+                            </p>
                         </div>
                     ) : (
                         <>
@@ -391,6 +490,16 @@ export default function Conversas() {
                                     >
                                         <RotateCcw size={14} />
                                         <span>Reiniciar memória</span>
+                                    </button>
+                                    <button
+                                        className={`conv-toggle-ativo ${selected.arquivada === true ? 'conv-toggle-ativo--on' : 'conv-toggle-ativo--off'}`}
+                                        onClick={toggleArquivada}
+                                        disabled={saving}
+                                        title={selected.arquivada === true ? 'Desarquivar esta conversa' : 'Arquivar esta conversa'}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                                    >
+                                        <Archive size={14} />
+                                        <span>{saving ? 'Salvando...' : selected.arquivada === true ? 'Desarquivar' : 'Arquivar'}</span>
                                     </button>
                                     <button
                                         className={`conv-toggle-ativo ${selected.ativo === true ? 'conv-toggle-ativo--on' : 'conv-toggle-ativo--off'}`}
