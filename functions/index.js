@@ -595,6 +595,42 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
               "";
     }
 
+    // 8. Validar slug e buscar agente por slug no Firestore
+    if (!agenteSlug) {
+      logger.info("webhookRespondeChat — sem slug na URL");
+      return response.status(200).json({ error: "semSlug" });
+    }
+
+    const agentSnap = await admin
+      .firestore()
+      .collection("agents")
+      .where("slug", "==", agenteSlug)
+      .limit(1)
+      .get();
+
+    if (agentSnap.empty) {
+      logger.warn("webhookRespondeChat — agente nao encontrado", { slug: agenteSlug });
+      return response.status(200).json({ error: "agenteNaoEncontrado" });
+    }
+
+    const agentDoc = agentSnap.docs[0];
+    const agent = { id: agentDoc.id, ...agentDoc.data() };
+
+    // 9. Ler configurações do app (Gemini API Key e Respondechat Token)
+    const settingsSnap = await admin
+      .firestore()
+      .doc("settings/app")
+      .get();
+
+    const geminiApiKey = settingsSnap.exists
+      ? settingsSnap.data().geminiApiKey
+      : null;
+
+    if (!geminiApiKey) {
+      logger.warn("webhookRespondeChat — sem chave gemini");
+      return response.status(200).json({ error: "semChave" });
+    }
+
     // --- TRANSCRIÇÃO DE ÁUDIO (Gatilho) ---
     const isAudio = request.body.message?.type === "audio" && request.body.message?.mediaUrl;
     let transcricaoSucesso = false;
@@ -661,42 +697,6 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       if (!transcricaoSucesso) {
         texto = "";
       }
-    }
-
-    // 8. Validar slug e buscar agente por slug no Firestore
-    if (!agenteSlug) {
-      logger.info("webhookRespondeChat — sem slug na URL");
-      return response.status(200).json({ error: "semSlug" });
-    }
-
-    const agentSnap = await admin
-      .firestore()
-      .collection("agents")
-      .where("slug", "==", agenteSlug)
-      .limit(1)
-      .get();
-
-    if (agentSnap.empty) {
-      logger.warn("webhookRespondeChat — agente nao encontrado", { slug: agenteSlug });
-      return response.status(200).json({ error: "agenteNaoEncontrado" });
-    }
-
-    const agentDoc = agentSnap.docs[0];
-    const agent = { id: agentDoc.id, ...agentDoc.data() };
-
-    // 9. Ler configurações do app (Gemini API Key e Respondechat Token)
-    const settingsSnap = await admin
-      .firestore()
-      .doc("settings/app")
-      .get();
-
-    const geminiApiKey = settingsSnap.exists
-      ? settingsSnap.data().geminiApiKey
-      : null;
-
-    if (!geminiApiKey) {
-      logger.warn("webhookRespondeChat — sem chave gemini");
-      return response.status(200).json({ error: "semChave" });
     }
 
     // 10. Montar systemPrompt
