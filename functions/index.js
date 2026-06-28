@@ -1320,6 +1320,7 @@ async function processarRemarketing() {
 
         await doc.ref.set({
           remarketingEnviado: true,
+          arquivada: true,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
 
