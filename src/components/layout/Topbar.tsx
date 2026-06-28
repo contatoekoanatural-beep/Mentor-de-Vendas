@@ -9,7 +9,7 @@ interface TopbarProps {
 }
 
 const PAGE_TITLES: Record<string, string> = {
-    '/produtos': 'Produtos',
+    '/produtos': 'Agentes',
     '/configuracoes': 'Configurações',
 };
 

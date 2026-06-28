@@ -88,7 +88,7 @@ export default function Produtos() {
             <div className="flex justify-between items-center mb-6" style={{ marginBottom: 'var(--spacing-lg)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                     <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, color: 'var(--color-text)' }}>
-                        Seus Produtos
+                        Agentes
                     </h2>
                     <p className="text-muted text-sm">
                         Selecione um produto para gerenciar e treinar os agentes de IA associados.

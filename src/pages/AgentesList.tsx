@@ -100,7 +100,7 @@ export default function AgentesList() {
             <div style={{ marginBottom: 'var(--spacing-md)' }}>
                 <Link to="/produtos" className="flex items-center gap-1 text-muted hover-text" style={{ textDecoration: 'none', display: 'inline-flex' }}>
                     <ChevronLeft size={16} />
-                    <span className="text-sm">Voltar para Produtos</span>
+                    <span className="text-sm">Voltar para Agentes</span>
                 </Link>
             </div>
 
