@@ -3,7 +3,7 @@
 // ========================================
 
 import { useEffect, useState, useRef } from 'react';
-import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown } from 'lucide-react';
+import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
 import { setConversationAtivo, resetConversation, subscribeConversations } from '../services/firebase';
@@ -71,15 +71,24 @@ export default function Conversas() {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [pendentesExpanded, setPendentesExpanded] = useState(false);
+    const [busca, setBusca] = useState('');
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const selected = conversations.find((c) => c.id === selectedId) || null;
 
-    const pendentes = conversations.filter(
+    // Filtro de busca local por telefone
+    const cleanSearch = busca.replace(/\D/g, '');
+    const filteredConversations = conversations.filter(conv => {
+        if (!cleanSearch) return true;
+        const cleanNumero = (conv.numero || '').replace(/\D/g, '');
+        return cleanNumero.includes(cleanSearch);
+    });
+
+    const pendentes = filteredConversations.filter(
         (conv) => conv.status === 'pendente' && (!conv.messages || conv.messages.length === 0)
     );
-    const normais = conversations.filter(
+    const normais = filteredConversations.filter(
         (conv) => !(conv.status === 'pendente' && (!conv.messages || conv.messages.length === 0))
     );
 
@@ -180,10 +189,51 @@ export default function Conversas() {
             <div className="conversations-layout">
                 {/* Left column: conversation list */}
                 <div className="conversations-list">
-                    {conversations.length === 0 ? (
+                    {/* Campo de Busca local */}
+                    <div className="conversations-search-bar" style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-color)' }}>
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                            <input
+                                type="text"
+                                placeholder="Buscar por número..."
+                                value={busca}
+                                onChange={(e) => setBusca(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 12px 8px 36px',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    background: 'var(--bg-input, #fff)',
+                                    color: 'var(--text-main)',
+                                    fontSize: '0.875rem'
+                                }}
+                            />
+                            <div style={{ position: 'absolute', left: '12px', display: 'flex', alignItems: 'center', pointerEvents: 'none', color: 'var(--text-muted)' }}>
+                                <Search size={16} />
+                            </div>
+                            {busca && (
+                                <button
+                                    onClick={() => setBusca('')}
+                                    style={{
+                                        position: 'absolute',
+                                        right: '12px',
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: 'var(--text-muted)',
+                                        cursor: 'pointer',
+                                        fontSize: '0.875rem',
+                                        padding: 0
+                                    }}
+                                >
+                                    ✕
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {filteredConversations.length === 0 ? (
                         <div className="conversations-empty-list">
                             <MessageSquare size={32} />
-                            <p>Nenhuma conversa encontrada.</p>
+                            <p>{conversations.length === 0 ? 'Nenhuma conversa encontrada.' : 'Nenhum resultado para a busca.'}</p>
                         </div>
                     ) : (
                         <>
