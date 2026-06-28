@@ -601,6 +601,9 @@ export const resetConversation = (id: string) =>
         updatedAt: serverTimestamp()
     });
 
+export const deleteConversation = (id: string) =>
+    deleteDocument(COLLECTIONS.conversations, id);
+
 // ----------------------------------------
 // Storage Functions
 // ----------------------------------------

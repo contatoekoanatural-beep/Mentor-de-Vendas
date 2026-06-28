@@ -3,10 +3,10 @@
 // ========================================
 
 import { useEffect, useState, useRef } from 'react';
-import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive } from 'lucide-react';
+import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2 } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation } from '../services/firebase';
 
 // ----------------------------------------
 // Helpers
@@ -187,6 +187,26 @@ export default function Conversas() {
             );
         } catch (error) {
             console.error('Erro ao reiniciar conversa:', error);
+        }
+        setSaving(false);
+    };
+
+    // Excluir conversa permanentemente
+    const handleExcluir = async () => {
+        if (!selected || selected.arquivada !== true || saving) return;
+
+        const confirmed = window.confirm(
+            "Excluir permanentemente esta conversa? Todo o histórico será apagado e NÃO poderá ser recuperado. Esta ação é irreversível."
+        );
+        if (!confirmed) return;
+
+        setSaving(true);
+        try {
+            await deleteConversation(selected.id);
+            // Limpa a seleção para evitar erro no painel lateral
+            setSelectedId(null);
+        } catch (error) {
+            console.error('Erro ao excluir conversa:', error);
         }
         setSaving(false);
     };
@@ -501,6 +521,18 @@ export default function Conversas() {
                                         <Archive size={14} />
                                         <span>{saving ? 'Salvando...' : selected.arquivada === true ? 'Desarquivar' : 'Arquivar'}</span>
                                     </button>
+                                    {selected.arquivada === true && (
+                                        <button
+                                            className="conv-toggle-ativo conv-toggle-ativo--off"
+                                            onClick={handleExcluir}
+                                            disabled={saving}
+                                            title="Excluir permanentemente esta conversa"
+                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#ef4444' }}
+                                        >
+                                            <Trash2 size={14} />
+                                            <span>Excluir</span>
+                                        </button>
+                                    )}
                                     <button
                                         className={`conv-toggle-ativo ${selected.ativo === true ? 'conv-toggle-ativo--on' : 'conv-toggle-ativo--off'}`}
                                         onClick={toggleAtivo}
