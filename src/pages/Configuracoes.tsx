@@ -6,6 +6,7 @@ import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe } from 
 
 export default function Configuracoes() {
     const { addToast } = useToast();
+    const [activeTab, setActiveTab] = useState<'webhooks' | 'ia' | 'canais'>('webhooks');
     const [apiKey, setApiKey] = useState('');
     const [hasExistingKey, setHasExistingKey] = useState(false);
     const [showKey, setShowKey] = useState(false);
@@ -179,76 +180,82 @@ export default function Configuracoes() {
                 </p>
             </div>
 
-            {/* API Key Section */}
-            <div className="card" style={{ maxWidth: '600px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
-                    <div style={{
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '50%',
-                        background: 'var(--bg-card-elevated)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--primary)',
-                    }}>
-                        <Key size={20} />
-                    </div>
-                    <div>
-                        <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                            Chave da API (Gemini)
-                        </h3>
-                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                            Usada para gerar respostas de IA no chat de teste dos agentes.
-                        </p>
-                    </div>
-                </div>
+            {/* Sub-abas de Navegação */}
+            <div className="tabs">
+                <button
+                    type="button"
+                    className={`tab ${activeTab === 'webhooks' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('webhooks')}
+                >
+                    Webhooks
+                </button>
+                <button
+                    type="button"
+                    className={`tab ${activeTab === 'ia' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('ia')}
+                >
+                    IA
+                </button>
+                <button
+                    type="button"
+                    className={`tab ${activeTab === 'canais' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('canais')}
+                >
+                    Canais
+                </button>
+            </div>
 
-                {/* Status indicator */}
-                {!isLoading && (
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-2)',
-                        padding: 'var(--space-3) var(--space-4)',
-                        borderRadius: 'var(--radius-md)',
-                        backgroundColor: hasExistingKey ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
-                        marginBottom: 'var(--spacing-md)',
-                    }}>
-                        {hasExistingKey ? (
-                            <>
-                                <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>
-                                    Chave configurada
-                                </span>
-                            </>
-                        ) : (
-                            <>
-                                <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-                                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>
-                                    Nenhuma chave configurada
-                                </span>
-                            </>
-                        )}
+            {/* Aba Webhooks */}
+            {activeTab === 'webhooks' && (
+                /* Webhooks Section */
+                <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                        <div style={{
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '50%',
+                            background: 'var(--bg-card-elevated)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--primary)',
+                        }}>
+                            <Globe size={20} />
+                        </div>
+                        <div>
+                            <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                Configurações de Webhooks
+                            </h3>
+                            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                Configure os endpoints de webhook para envio de eventos externos.
+                            </p>
+                        </div>
                     </div>
-                )}
 
-                {/* Input */}
-                <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                    <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
-                        {hasExistingKey ? 'Substituir chave' : 'Colar chave da API'}
-                    </label>
-                    <div style={{ position: 'relative' }}>
+                    {/* Webhook Lead Pronto */}
+                    <div style={{ marginBottom: 'var(--spacing-lg)', paddingBottom: 'var(--spacing-md)', borderBottom: '1px solid var(--border-subtle)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                            <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+                                Lead Pronto
+                            </label>
+                            <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={lpAtivo}
+                                    onChange={(e) => setLpAtivo(e.target.checked)}
+                                />
+                                <span>Ativo</span>
+                            </label>
+                        </div>
                         <input
-                            type={showKey ? 'text' : 'password'}
-                            value={apiKey}
-                            onChange={(e) => setApiKey(e.target.value)}
-                            placeholder={hasExistingKey ? 'Cole a nova chave para substituir...' : 'Cole sua chave do Google AI Studio aqui...'}
-                            disabled={isSaving}
+                            type="text"
+                            value={lpUrl}
+                            onChange={(e) => setLpUrl(e.target.value)}
+                            placeholder="https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE"
+                            disabled={isSavingWebhooks}
                             style={{
                                 width: '100%',
-                                padding: '14px',
-                                paddingRight: '48px',
+                                padding: '12px',
                                 background: 'var(--bg-input)',
                                 border: '1px solid var(--border-subtle)',
                                 borderRadius: 'var(--radius-md)',
@@ -257,109 +264,32 @@ export default function Configuracoes() {
                                 fontFamily: 'var(--font-mono)',
                             }}
                         />
-                        <button
-                            type="button"
-                            onClick={() => setShowKey(!showKey)}
-                            style={{
-                                position: 'absolute',
-                                right: '12px',
-                                top: '50%',
-                                transform: 'translateY(-50%)',
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                color: 'var(--text-tertiary)',
-                                padding: '4px',
-                            }}
-                            title={showKey ? 'Ocultar' : 'Mostrar'}
-                        >
-                            {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                        </button>
                     </div>
-                </div>
 
-                {/* Save button */}
-                <button
-                    onClick={handleSaveKey}
-                    className="btn btn-primary"
-                    disabled={!apiKey.trim() || isSaving}
-                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                >
-                    <Save size={16} />
-                    <span>{isSaving ? 'Salvando...' : 'Salvar chave'}</span>
-                </button>
-            </div>
-
-            {/* ConverteChat Token Section */}
-            <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
-                    <div style={{
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '50%',
-                        background: 'var(--bg-card-elevated)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--primary)',
-                    }}>
-                        <Plug size={20} />
-                    </div>
-                    <div>
-                        <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                            Token ConverteChat
-                        </h3>
-                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                            Token do canal no ConverteChat (Conexões → Copiar token). Usado para enviar as respostas ao WhatsApp.
-                        </p>
-                    </div>
-                </div>
-
-                {/* Status indicator */}
-                {!isLoading && (
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-2)',
-                        padding: 'var(--space-3) var(--space-4)',
-                        borderRadius: 'var(--radius-md)',
-                        backgroundColor: hasExistingCcToken ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
-                        marginBottom: 'var(--spacing-md)',
-                    }}>
-                        {hasExistingCcToken ? (
-                            <>
-                                <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>
-                                    Token configurado
-                                </span>
-                            </>
-                        ) : (
-                            <>
-                                <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-                                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>
-                                    Nenhum token configurado
-                                </span>
-                            </>
-                        )}
-                    </div>
-                )}
-
-                {/* Input */}
-                <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                    <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
-                        {hasExistingCcToken ? 'Substituir token' : 'Colar token do ConverteChat'}
-                    </label>
-                    <div style={{ position: 'relative' }}>
+                    {/* Webhook Remarketing */}
+                    <div style={{ marginBottom: 'var(--spacing-lg)', paddingBottom: 'var(--spacing-md)', borderBottom: '1px solid var(--border-subtle)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                            <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+                                Remarketing
+                            </label>
+                            <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={remAtivo}
+                                    onChange={(e) => setRemAtivo(e.target.checked)}
+                                />
+                                <span>Ativo</span>
+                            </label>
+                        </div>
                         <input
-                            type={showCcToken ? 'text' : 'password'}
-                            value={ccToken}
-                            onChange={(e) => setCcToken(e.target.value)}
-                            placeholder={hasExistingCcToken ? 'Cole o novo token para substituir...' : 'Cole o token do ConverteChat aqui...'}
-                            disabled={isSavingCcToken}
+                            type="text"
+                            value={remUrl}
+                            onChange={(e) => setRemUrl(e.target.value)}
+                            placeholder="https://"
+                            disabled={isSavingWebhooks}
                             style={{
                                 width: '100%',
-                                padding: '14px',
-                                paddingRight: '48px',
+                                padding: '12px',
                                 background: 'var(--bg-input)',
                                 border: '1px solid var(--border-subtle)',
                                 borderRadius: 'var(--radius-md)',
@@ -368,109 +298,32 @@ export default function Configuracoes() {
                                 fontFamily: 'var(--font-mono)',
                             }}
                         />
-                        <button
-                            type="button"
-                            onClick={() => setShowCcToken(!showCcToken)}
-                            style={{
-                                position: 'absolute',
-                                right: '12px',
-                                top: '50%',
-                                transform: 'translateY(-50%)',
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                color: 'var(--text-tertiary)',
-                                padding: '4px',
-                            }}
-                            title={showCcToken ? 'Ocultar' : 'Mostrar'}
-                        >
-                            {showCcToken ? <EyeOff size={16} /> : <Eye size={16} />}
-                        </button>
                     </div>
-                </div>
 
-                {/* Save button */}
-                <button
-                    onClick={handleSaveCcToken}
-                    className="btn btn-primary"
-                    disabled={!ccToken.trim() || isSavingCcToken}
-                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                >
-                    <Save size={16} />
-                    <span>{isSavingCcToken ? 'Salvando...' : 'Salvar token'}</span>
-                </button>
-            </div>
-
-            {/* Responde Chat Token Section */}
-            <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
-                    <div style={{
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '50%',
-                        background: 'var(--bg-card-elevated)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--primary)',
-                    }}>
-                        <Plug size={20} />
-                    </div>
-                    <div>
-                        <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                            Token Responde Chat
-                        </h3>
-                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                            Token do Responde Chat. Usado para enviar as respostas ao WhatsApp.
-                        </p>
-                    </div>
-                </div>
-
-                {/* Status indicator */}
-                {!isLoading && (
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-2)',
-                        padding: 'var(--space-3) var(--space-4)',
-                        borderRadius: 'var(--radius-md)',
-                        backgroundColor: hasExistingRcToken ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
-                        marginBottom: 'var(--spacing-md)',
-                    }}>
-                        {hasExistingRcToken ? (
-                            <>
-                                <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>
-                                    Token configurado
-                                </span>
-                            </>
-                        ) : (
-                            <>
-                                <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-                                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>
-                                    Nenhum token configurado
-                                </span>
-                            </>
-                        )}
-                    </div>
-                )}
-
-                {/* Input */}
-                <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                    <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
-                        {hasExistingRcToken ? 'Substituir token' : 'Colar token do Responde Chat'}
-                    </label>
-                    <div style={{ position: 'relative' }}>
+                    {/* Webhook IA Acionada */}
+                    <div style={{ marginBottom: 'var(--spacing-lg)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                            <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+                                IA Acionada
+                            </label>
+                            <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={iaAtivo}
+                                    onChange={(e) => setIaAtivo(e.target.checked)}
+                                />
+                                <span>Ativo</span>
+                            </label>
+                        </div>
                         <input
-                            type={showRcToken ? 'text' : 'password'}
-                            value={rcToken}
-                            onChange={(e) => setRcToken(e.target.value)}
-                            placeholder={hasExistingRcToken ? 'Cole o novo token para substituir...' : 'Cole o token do Responde Chat aqui...'}
-                            disabled={isSavingRcToken}
+                            type="text"
+                            value={iaUrl}
+                            onChange={(e) => setIaUrl(e.target.value)}
+                            placeholder="https://"
+                            disabled={isSavingWebhooks}
                             style={{
                                 width: '100%',
-                                padding: '14px',
-                                paddingRight: '48px',
+                                padding: '12px',
                                 background: 'var(--bg-input)',
                                 border: '1px solid var(--border-subtle)',
                                 borderRadius: 'var(--radius-md)',
@@ -479,177 +332,361 @@ export default function Configuracoes() {
                                 fontFamily: 'var(--font-mono)',
                             }}
                         />
+                    </div>
+
+                    {/* Save button */}
+                    <button
+                        onClick={handleSaveWebhooks}
+                        className="btn btn-primary"
+                        disabled={isSavingWebhooks}
+                        style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                    >
+                        <Save size={16} />
+                        <span>{isSavingWebhooks ? 'Salvando...' : 'Salvar Webhooks'}</span>
+                    </button>
+                </div>
+            )}
+
+            {/* Aba IA */}
+            {activeTab === 'ia' && (
+                /* API Key Section */
+                <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                        <div style={{
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '50%',
+                            background: 'var(--bg-card-elevated)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--primary)',
+                        }}>
+                            <Key size={20} />
+                        </div>
+                        <div>
+                            <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                Chave da API (Gemini)
+                            </h3>
+                            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                Usada para gerar respostas de IA no chat de teste dos agentes.
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Status indicator */}
+                    {!isLoading && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'var(--space-2)',
+                            padding: 'var(--space-3) var(--space-4)',
+                            borderRadius: 'var(--radius-md)',
+                            backgroundColor: hasExistingKey ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
+                            marginBottom: 'var(--spacing-md)',
+                        }}>
+                            {hasExistingKey ? (
+                                <>
+                                    <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>
+                                        Chave configurada
+                                    </span>
+                                </>
+                            ) : (
+                                <>
+                                    <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>
+                                        Nenhuma chave configurada
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Input */}
+                    <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                        <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                            {hasExistingKey ? 'Substituir chave' : 'Colar chave da API'}
+                        </label>
+                        <div style={{ position: 'relative' }}>
+                            <input
+                                type={showKey ? 'text' : 'password'}
+                                value={apiKey}
+                                onChange={(e) => setApiKey(e.target.value)}
+                                placeholder={hasExistingKey ? 'Cole a nova chave para substituir...' : 'Cole sua chave do Google AI Studio aqui...'}
+                                disabled={isSaving}
+                                style={{
+                                    width: '100%',
+                                    padding: '14px',
+                                    paddingRight: '48px',
+                                    background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-subtle)',
+                                    borderRadius: 'var(--radius-md)',
+                                    color: 'var(--text-primary)',
+                                    fontSize: 'var(--text-sm)',
+                                    fontFamily: 'var(--font-mono)',
+                                }}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowKey(!showKey)}
+                                style={{
+                                    position: 'absolute',
+                                    right: '12px',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    color: 'var(--text-tertiary)',
+                                    padding: '4px',
+                                }}
+                                title={showKey ? 'Ocultar' : 'Mostrar'}
+                            >
+                                {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Save button */}
+                    <button
+                        onClick={handleSaveKey}
+                        className="btn btn-primary"
+                        disabled={!apiKey.trim() || isSaving}
+                        style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                    >
+                        <Save size={16} />
+                        <span>{isSaving ? 'Salvando...' : 'Salvar chave'}</span>
+                    </button>
+                </div>
+            )}
+
+            {/* Aba Canais */}
+            {activeTab === 'canais' && (
+                <>
+                    {/* ConverteChat Token Section */}
+                    <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                background: 'var(--bg-card-elevated)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: 'var(--primary)',
+                            }}>
+                                <Plug size={20} />
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    Token ConverteChat
+                                </h3>
+                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                    Token do canal no ConverteChat (Conexões → Copiar token). Usado para enviar as respostas ao WhatsApp.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Status indicator */}
+                        {!isLoading && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 'var(--space-2)',
+                                padding: 'var(--space-3) var(--space-4)',
+                                borderRadius: 'var(--radius-md)',
+                                backgroundColor: hasExistingCcToken ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
+                                marginBottom: 'var(--spacing-md)',
+                            }}>
+                                {hasExistingCcToken ? (
+                                    <>
+                                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>
+                                            Token configurado
+                                        </span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>
+                                            Nenhum token configurado
+                                        </span>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Input */}
+                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                                {hasExistingCcToken ? 'Substituir token' : 'Colar token do ConverteChat'}
+                            </label>
+                            <div style={{ position: 'relative' }}>
+                                <input
+                                    type={showCcToken ? 'text' : 'password'}
+                                    value={ccToken}
+                                    onChange={(e) => setCcToken(e.target.value)}
+                                    placeholder={hasExistingCcToken ? 'Cole o novo token para substituir...' : 'Cole o token do ConverteChat aqui...'}
+                                    disabled={isSavingCcToken}
+                                    style={{
+                                        width: '100%',
+                                        padding: '14px',
+                                        paddingRight: '48px',
+                                        background: 'var(--bg-input)',
+                                        border: '1px solid var(--border-subtle)',
+                                        borderRadius: 'var(--radius-md)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: 'var(--text-sm)',
+                                        fontFamily: 'var(--font-mono)',
+                                    }}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCcToken(!showCcToken)}
+                                    style={{
+                                        position: 'absolute',
+                                        right: '12px',
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: 'var(--text-tertiary)',
+                                        padding: '4px',
+                                    }}
+                                    title={showCcToken ? 'Ocultar' : 'Mostrar'}
+                                >
+                                    {showCcToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Save button */}
                         <button
-                            type="button"
-                            onClick={() => setShowRcToken(!showRcToken)}
-                            style={{
-                                position: 'absolute',
-                                right: '12px',
-                                top: '50%',
-                                transform: 'translateY(-50%)',
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                color: 'var(--text-tertiary)',
-                                padding: '4px',
-                            }}
-                            title={showRcToken ? 'Ocultar' : 'Mostrar'}
+                            onClick={handleSaveCcToken}
+                            className="btn btn-primary"
+                            disabled={!ccToken.trim() || isSavingCcToken}
+                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
                         >
-                            {showRcToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                            <Save size={16} />
+                            <span>{isSavingCcToken ? 'Salvando...' : 'Salvar token'}</span>
                         </button>
                     </div>
-                </div>
 
-                {/* Save button */}
-                <button
-                    onClick={handleSaveRcToken}
-                    className="btn btn-primary"
-                    disabled={!rcToken.trim() || isSavingRcToken}
-                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                >
-                    <Save size={16} />
-                    <span>{isSavingRcToken ? 'Salvando...' : 'Salvar token'}</span>
-                </button>
-            </div>
+                    {/* Responde Chat Token Section */}
+                    <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                background: 'var(--bg-card-elevated)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: 'var(--primary)',
+                            }}>
+                                <Plug size={20} />
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    Token Responde Chat
+                                </h3>
+                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                    Token do Responde Chat. Usado para enviar as respostas ao WhatsApp.
+                                </p>
+                            </div>
+                        </div>
 
-            {/* Webhooks Section */}
-            <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
-                    <div style={{
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '50%',
-                        background: 'var(--bg-card-elevated)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--primary)',
-                    }}>
-                        <Globe size={20} />
+                        {/* Status indicator */}
+                        {!isLoading && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 'var(--space-2)',
+                                padding: 'var(--space-3) var(--space-4)',
+                                borderRadius: 'var(--radius-md)',
+                                backgroundColor: hasExistingRcToken ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
+                                marginBottom: 'var(--spacing-md)',
+                            }}>
+                                {hasExistingRcToken ? (
+                                    <>
+                                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>
+                                            Token configurado
+                                        </span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>
+                                            Nenhum token configurado
+                                        </span>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Input */}
+                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                                {hasExistingRcToken ? 'Substituir token' : 'Colar token do Responde Chat'}
+                            </label>
+                            <div style={{ position: 'relative' }}>
+                                <input
+                                    type={showRcToken ? 'text' : 'password'}
+                                    value={rcToken}
+                                    onChange={(e) => setRcToken(e.target.value)}
+                                    placeholder={hasExistingRcToken ? 'Cole o novo token para substituir...' : 'Cole o token do Responde Chat aqui...'}
+                                    disabled={isSavingRcToken}
+                                    style={{
+                                        width: '100%',
+                                        padding: '14px',
+                                        paddingRight: '48px',
+                                        background: 'var(--bg-input)',
+                                        border: '1px solid var(--border-subtle)',
+                                        borderRadius: 'var(--radius-md)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: 'var(--text-sm)',
+                                        fontFamily: 'var(--font-mono)',
+                                    }}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowRcToken(!showRcToken)}
+                                    style={{
+                                        position: 'absolute',
+                                        right: '12px',
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: 'var(--text-tertiary)',
+                                        padding: '4px',
+                                    }}
+                                    title={showRcToken ? 'Ocultar' : 'Mostrar'}
+                                >
+                                    {showRcToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Save button */}
+                        <button
+                            onClick={handleSaveRcToken}
+                            className="btn btn-primary"
+                            disabled={!rcToken.trim() || isSavingRcToken}
+                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                        >
+                            <Save size={16} />
+                            <span>{isSavingRcToken ? 'Salvando...' : 'Salvar token'}</span>
+                        </button>
                     </div>
-                    <div>
-                        <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                            Configurações de Webhooks
-                        </h3>
-                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                            Configure os endpoints de webhook para envio de eventos externos.
-                        </p>
-                    </div>
-                </div>
-
-                {/* Webhook Lead Pronto */}
-                <div style={{ marginBottom: 'var(--spacing-lg)', paddingBottom: 'var(--spacing-md)', borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
-                        <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                            Lead Pronto
-                        </label>
-                        <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
-                            <input
-                                type="checkbox"
-                                checked={lpAtivo}
-                                onChange={(e) => setLpAtivo(e.target.checked)}
-                            />
-                            <span>Ativo</span>
-                        </label>
-                    </div>
-                    <input
-                        type="text"
-                        value={lpUrl}
-                        onChange={(e) => setLpUrl(e.target.value)}
-                        placeholder="https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE"
-                        disabled={isSavingWebhooks}
-                        style={{
-                            width: '100%',
-                            padding: '12px',
-                            background: 'var(--bg-input)',
-                            border: '1px solid var(--border-subtle)',
-                            borderRadius: 'var(--radius-md)',
-                            color: 'var(--text-primary)',
-                            fontSize: 'var(--text-sm)',
-                            fontFamily: 'var(--font-mono)',
-                        }}
-                    />
-                </div>
-
-                {/* Webhook Remarketing */}
-                <div style={{ marginBottom: 'var(--spacing-lg)', paddingBottom: 'var(--spacing-md)', borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
-                        <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                            Remarketing
-                        </label>
-                        <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
-                            <input
-                                type="checkbox"
-                                checked={remAtivo}
-                                onChange={(e) => setRemAtivo(e.target.checked)}
-                            />
-                            <span>Ativo</span>
-                        </label>
-                    </div>
-                    <input
-                        type="text"
-                        value={remUrl}
-                        onChange={(e) => setRemUrl(e.target.value)}
-                        placeholder="https://"
-                        disabled={isSavingWebhooks}
-                        style={{
-                            width: '100%',
-                            padding: '12px',
-                            background: 'var(--bg-input)',
-                            border: '1px solid var(--border-subtle)',
-                            borderRadius: 'var(--radius-md)',
-                            color: 'var(--text-primary)',
-                            fontSize: 'var(--text-sm)',
-                            fontFamily: 'var(--font-mono)',
-                        }}
-                    />
-                </div>
-
-                {/* Webhook IA Acionada */}
-                <div style={{ marginBottom: 'var(--spacing-lg)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
-                        <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                            IA Acionada
-                        </label>
-                        <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
-                            <input
-                                type="checkbox"
-                                checked={iaAtivo}
-                                onChange={(e) => setIaAtivo(e.target.checked)}
-                            />
-                            <span>Ativo</span>
-                        </label>
-                    </div>
-                    <input
-                        type="text"
-                        value={iaUrl}
-                        onChange={(e) => setIaUrl(e.target.value)}
-                        placeholder="https://"
-                        disabled={isSavingWebhooks}
-                        style={{
-                            width: '100%',
-                            padding: '12px',
-                            background: 'var(--bg-input)',
-                            border: '1px solid var(--border-subtle)',
-                            borderRadius: 'var(--radius-md)',
-                            color: 'var(--text-primary)',
-                            fontSize: 'var(--text-sm)',
-                            fontFamily: 'var(--font-mono)',
-                        }}
-                    />
-                </div>
-
-                {/* Save button */}
-                <button
-                    onClick={handleSaveWebhooks}
-                    className="btn btn-primary"
-                    disabled={isSavingWebhooks}
-                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                >
-                    <Save size={16} />
-                    <span>{isSavingWebhooks ? 'Salvando...' : 'Salvar Webhooks'}</span>
-                </button>
-            </div>
+                </>
+            )}
         </div>
     );
 }
