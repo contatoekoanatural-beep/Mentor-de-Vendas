@@ -360,33 +360,44 @@ exports.webhookConverteChat = onRequest(async (request, response) => {
 
       if (leadPronto) {
         try {
-          const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
-          const webhookConfig = settingsData.webhooks?.leadPronto || {};
-          const webhookUrl = webhookConfig.url || RESPONDECHAT_WEBHOOK_LEAD;
-          const webhookAtivo = webhookConfig.ativo !== false;
+          // Releitura fresca do documento da conversa imediatamente antes de disparar (dedup contra condição de corrida)
+          const convSnapFresco = await convRef.get();
+          const leadProntoWebhookEnviado = convSnapFresco.exists ? !!convSnapFresco.data().leadProntoWebhookEnviado : false;
 
-          if (webhookAtivo && webhookUrl) {
-            logger.info("Disparando webhook de lead quente", { numero, url: webhookUrl });
-            const responseHook = await fetch(webhookUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: new URLSearchParams({
-                client_phone: numero,
-                client_name: "Lead Quente",
-              }).toString(),
-            });
-            const corpoResposta = await responseHook.text();
-            logger.info("Resposta do webhook de lead quente", {
-              status: responseHook.status,
-              corpo: corpoResposta,
-            });
+          if (!leadProntoWebhookEnviado) {
+            const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+            const webhookConfig = settingsData.webhooks?.leadPronto || {};
+            const webhookUrl = webhookConfig.url || RESPONDECHAT_WEBHOOK_LEAD;
+            const webhookAtivo = webhookConfig.ativo !== false;
+
+            if (webhookAtivo && webhookUrl) {
+              logger.info("Disparando webhook de lead quente", { numero, url: webhookUrl });
+              const responseHook = await fetch(webhookUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: new URLSearchParams({
+                  client_phone: numero,
+                  client_name: "Lead Quente",
+                }).toString(),
+              });
+              const corpoResposta = await responseHook.text();
+              logger.info("Resposta do webhook de lead quente", {
+                status: responseHook.status,
+                corpo: corpoResposta,
+              });
+
+              // Grava o flag de dedup para impedir novos disparos neste ciclo
+              await convRef.set({ leadProntoWebhookEnviado: true }, { merge: true });
+            } else {
+              logger.info("disparo lead pronto pulado: webhook inativo ou sem url", {
+                ativo: webhookAtivo,
+                hasUrl: !!webhookUrl,
+              });
+            }
           } else {
-            logger.info("disparo lead pronto pulado: webhook inativo ou sem url", {
-              ativo: webhookAtivo,
-              hasUrl: !!webhookUrl,
-            });
+            logger.info("Disparo de lead pronto pulado por dedup (leitura fresca): webhook ja enviado anteriormente para esta conversa", { numero });
           }
         } catch (err) {
           logger.error("Erro ao disparar webhook de lead quente", err);
@@ -760,6 +771,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     if (estavaArquivada) {
       payloadCaminhoB.arquivada = false;
       payloadCaminhoB.ativo = true;
+      payloadCaminhoB.leadProntoWebhookEnviado = false; // Reset do dedup no desarquivamento/reativação
     }
 
     await convRef.set(payloadCaminhoB, { merge: true });
@@ -900,33 +912,44 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
       if (leadPronto) {
         try {
-          const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
-          const webhookConfig = settingsData.webhooks?.leadPronto || {};
-          const webhookUrl = webhookConfig.url || RESPONDECHAT_WEBHOOK_LEAD;
-          const webhookAtivo = webhookConfig.ativo !== false;
+          // Releitura fresca do documento da conversa imediatamente antes de disparar (dedup contra condição de corrida)
+          const convSnapFresco = await convRef.get();
+          const leadProntoWebhookEnviado = convSnapFresco.exists ? !!convSnapFresco.data().leadProntoWebhookEnviado : false;
 
-          if (webhookAtivo && webhookUrl) {
-            logger.info("Disparando webhook de lead quente", { numero, url: webhookUrl });
-            const responseHook = await fetch(webhookUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: new URLSearchParams({
-                client_phone: numero,
-                client_name: "Lead Quente",
-              }).toString(),
-            });
-            const corpoResposta = await responseHook.text();
-            logger.info("Resposta do webhook de lead quente", {
-              status: responseHook.status,
-              corpo: corpoResposta,
-            });
+          if (!leadProntoWebhookEnviado) {
+            const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+            const webhookConfig = settingsData.webhooks?.leadPronto || {};
+            const webhookUrl = webhookConfig.url || RESPONDECHAT_WEBHOOK_LEAD;
+            const webhookAtivo = webhookConfig.ativo !== false;
+
+            if (webhookAtivo && webhookUrl) {
+              logger.info("Disparando webhook de lead quente", { numero, url: webhookUrl });
+              const responseHook = await fetch(webhookUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: new URLSearchParams({
+                  client_phone: numero,
+                  client_name: "Lead Quente",
+                }).toString(),
+              });
+              const corpoResposta = await responseHook.text();
+              logger.info("Resposta do webhook de lead quente", {
+                status: responseHook.status,
+                corpo: corpoResposta,
+              });
+
+              // Grava o flag de dedup para impedir novos disparos neste ciclo
+              await convRef.set({ leadProntoWebhookEnviado: true }, { merge: true });
+            } else {
+              logger.info("disparo lead pronto pulado: webhook inativo ou sem url", {
+                ativo: webhookAtivo,
+                hasUrl: !!webhookUrl,
+              });
+            }
           } else {
-            logger.info("disparo lead pronto pulado: webhook inativo ou sem url", {
-              ativo: webhookAtivo,
-              hasUrl: !!webhookUrl,
-            });
+            logger.info("Disparo de lead pronto pulado por dedup (leitura fresca): webhook ja enviado anteriormente para esta conversa", { numero });
           }
         } catch (err) {
           logger.error("Erro ao disparar webhook de lead quente", err);
