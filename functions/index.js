@@ -715,6 +715,82 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       }
     }
 
+    // --- LEITURA DE IMAGEM/FIGURINHA ---
+    const isImagemOuFigurinha = (request.body.message?.type === "image" || request.body.message?.type === "sticker") && request.body.message?.mediaUrl;
+    let leituraMidiaSucesso = false;
+
+    if (isImagemOuFigurinha) {
+      try {
+        // Zerar texto para evitar poluição do campo body nas imagens
+        texto = "";
+        const mediaUrl = request.body.message.mediaUrl;
+        const mediaType = request.body.message.type;
+        logger.info("webhookRespondeChat — baixando imagem/figurinha para leitura", { numero, mediaUrl, mediaType });
+
+        const mediaRes = await fetch(mediaUrl);
+        if (!mediaRes.ok) {
+          throw new Error(`Falha ao baixar a mídia. Status: ${mediaRes.status}`);
+        }
+
+        const mediaBuffer = await mediaRes.arrayBuffer();
+        const base64Media = Buffer.from(mediaBuffer).toString("base64");
+
+        // Determinar o tipo mime correto (webp para sticker, raw?.imageMessage?.mimetype ou image/jpeg para image)
+        const mimeType = mediaType === "sticker"
+          ? "image/webp"
+          : (request.body.message?.raw?.imageMessage?.mimetype || "image/jpeg");
+
+        logger.info("webhookRespondeChat — enviando imagem/figurinha para leitura no Gemini", { numero, mimeType });
+        const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+
+        const visionResponse = await fetch(`${geminiUrl}?key=${geminiApiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: mimeType,
+                    data: base64Media
+                  }
+                },
+                {
+                  text: "Você está lendo uma imagem ou figurinha que um cliente enviou em uma conversa de vendas pelo WhatsApp. Descreva de forma objetiva e em português o que a imagem mostra. Se houver QUALQUER texto na imagem (endereço, nome, número, comprovante, documento), transcreva-o fielmente. Se for uma figurinha, descreva o gesto ou emoção que ela expressa (ex.: positivo/joinha, ok, mãos pedindo, coração, risada). Responda apenas com a descrição e o texto extraído, sem comentários, sem saudação e sem inventar nada que não esteja visível."
+                }
+              ]
+            }]
+          })
+        });
+
+        if (!visionResponse.ok) {
+          const errBody = await visionResponse.text();
+          throw new Error(`Erro na API Gemini de Visão: ${visionResponse.status} - ${errBody}`);
+        }
+
+        const visionData = await visionResponse.json();
+        const descricao = visionData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+        if (descricao.trim()) {
+          logger.info("DIAG_MIDIA_LEITURA", { numero, descricao: descricao.trim() });
+          texto = `[O cliente enviou uma imagem. Conteúdo: ${descricao.trim()}]`;
+          leituraMidiaSucesso = true;
+        } else {
+          logger.warn("webhookRespondeChat — leitura de mídia retornou vazia");
+        }
+      } catch (errMedia) {
+        logger.error("webhookRespondeChat — erro durante o processo de leitura de imagem/figurinha", {
+          error: String(errMedia),
+          stack: errMedia.stack
+        });
+      }
+
+      // Se a leitura falhar, mantemos o texto vazio para acionar o fallback padrão
+      if (!leituraMidiaSucesso) {
+        texto = "";
+      }
+    }
+
     // 10. Montar systemPrompt
     const systemPrompt = buildAgentSystemPrompt({
       base: agent.base || "",
