@@ -3,6 +3,7 @@
 // ========================================
 
 import { getAppSettings } from './firebase';
+import type { AgentCase } from '../types';
 
 const ENV_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
@@ -384,7 +385,7 @@ export interface AgentConfig {
     maxMessages?: number;
 }
 
-export function buildAgentSystemPrompt(config: AgentConfig): string {
+export function buildAgentSystemPrompt(config: AgentConfig, cases?: AgentCase[]): string {
     const sections: string[] = [config.base.trim()];
 
     if (config.tone && config.tone.trim()) {
@@ -414,6 +415,32 @@ Mensagem explicativa 2 com a pergunta de avanço comercial.
         sections.push(`\nFORMATO DE RESPOSTA: divida sua resposta em no máximo ${config.maxMessages} mensagens curtas e separadas. Separe cada mensagem com uma linha contendo exatamente '---' (três hifens), e nada mais nessa linha. Não use '---' dentro do conteúdo de uma mensagem.`);
     } else {
         sections.push(`\nFORMATO DE RESPOSTA: responda em uma única mensagem. Não use o separador '---'.`);
+    }
+
+    // Injeção de Casos de Treinamento
+    if (cases && cases.length > 0) {
+        const goodCases = cases.filter(c => c.kind === "good" && c.content && c.content.trim());
+        const badCases = cases.filter(c => c.kind === "bad" && c.content && c.content.trim());
+
+        if (goodCases.length > 0 || badCases.length > 0) {
+            let casesSection = "\nEXEMPLOS REAIS DE ATENDIMENTO:\nAbaixo estão exemplos reais de conversas de atendimento. Eles mostram, na prática, o jeito de conduzir a conversa. Estude o estilo, o tom e a forma de conduzir — não copie o texto literalmente, use como referência de como agir.\n";
+
+            if (goodCases.length > 0) {
+                casesSection += "\nEXEMPLOS DE COMO CONDUZIR BEM (siga este estilo):\n";
+                goodCases.forEach(c => {
+                    casesSection += `\n${c.content.trim()}\n`;
+                });
+            }
+
+            if (badCases.length > 0) {
+                casesSection += "\nEXEMPLOS DO QUE EVITAR (NÃO conduza assim):\n";
+                badCases.forEach(c => {
+                    casesSection += `\n${c.content.trim()}\n`;
+                });
+            }
+
+            sections.push(casesSection);
+        }
     }
 
     return sections.join('\n');

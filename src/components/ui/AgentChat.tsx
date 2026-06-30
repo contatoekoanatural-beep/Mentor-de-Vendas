@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { Agent } from '../../types';
+import type { Agent, AgentCase } from '../../types';
 import { chatWithAgent, buildAgentSystemPrompt } from '../../services/aiService';
 import type { ChatTurn } from '../../services/aiService';
 import { X, Send, Trash2, Sparkles, User, AlertTriangle } from 'lucide-react';
@@ -16,9 +16,10 @@ interface AgentChatProps {
     agent: Agent;
     isOpen: boolean;
     onClose: () => void;
+    cases?: AgentCase[];
 }
 
-export default function AgentChat({ agent, isOpen, onClose }: AgentChatProps) {
+export default function AgentChat({ agent, isOpen, onClose, cases }: AgentChatProps) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
@@ -89,7 +90,7 @@ export default function AgentChat({ agent, isOpen, onClose }: AgentChatProps) {
                 handoffRule: agent.handoffRule,
                 responseMode: agent.responseMode,
                 maxMessages: agent.maxMessages,
-            });
+            }, cases);
 
             const result = await chatWithAgent(systemPrompt, history, trimmed);
 

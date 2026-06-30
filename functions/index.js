@@ -49,7 +49,7 @@ exports.ping = onRequest((request, response) => {
 // buildAgentSystemPrompt — monta o system prompt do agente
 // (cópia fiel de src/services/aiService.ts, sem tipos TS)
 // ----------------------------------------
-function buildAgentSystemPrompt(config) {
+function buildAgentSystemPrompt(config, cases) {
   const sections = [config.base.trim()];
 
   if (config.tone && config.tone.trim()) {
@@ -89,6 +89,32 @@ Mensagem explicativa 2 com a pergunta de avanço comercial.
     sections.push(
       `\nFORMATO DE RESPOSTA: responda em uma única mensagem. Não use o separador '---'.`
     );
+  }
+
+  // Injeção de Casos de Treinamento
+  if (cases && cases.length > 0) {
+    const goodCases = cases.filter(c => c.kind === "good" && c.content && c.content.trim());
+    const badCases = cases.filter(c => c.kind === "bad" && c.content && c.content.trim());
+
+    if (goodCases.length > 0 || badCases.length > 0) {
+      let casesSection = "\nEXEMPLOS REAIS DE ATENDIMENTO:\nAbaixo estão exemplos reais de conversas de atendimento. Eles mostram, na prática, o jeito de conduzir a conversa. Estude o estilo, o tom e a forma de conduzir — não copie o texto literalmente, use como referência de como agir.\n";
+
+      if (goodCases.length > 0) {
+        casesSection += "\nEXEMPLOS DE COMO CONDUZIR BEM (siga este estilo):\n";
+        goodCases.forEach(c => {
+          casesSection += `\n${c.content.trim()}\n`;
+        });
+      }
+
+      if (badCases.length > 0) {
+        casesSection += "\nEXEMPLOS DO QUE EVITAR (NÃO conduza assim):\n";
+        badCases.forEach(c => {
+          casesSection += `\n${c.content.trim()}\n`;
+        });
+      }
+
+      sections.push(casesSection);
+    }
   }
 
   return sections.join("\n");
@@ -632,6 +658,14 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     const agentDoc = agentSnap.docs[0];
     const agent = { id: agentDoc.id, ...agentDoc.data() };
 
+    // Buscar casos do agente no Firestore
+    const casesSnap = await admin
+      .firestore()
+      .collection("agentCases")
+      .where("agentId", "==", agent.id)
+      .get();
+    const cases = casesSnap.docs.map((doc) => doc.data());
+
     // 9. Ler configurações do app (Gemini API Key e Respondechat Token)
     const settingsSnap = await admin
       .firestore()
@@ -798,7 +832,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       handoffRule: agent.handoffRule,
       responseMode: agent.responseMode,
       maxMessages: agent.maxMessages,
-    });
+    }, cases);
 
     // 11. Ler histórico de conversa do Firestore
     const convDocId = numero + "_" + agenteSlug;

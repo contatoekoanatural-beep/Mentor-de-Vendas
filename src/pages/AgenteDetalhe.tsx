@@ -1082,6 +1082,7 @@ export default function AgenteDetalhe() {
                 agent={agent}
                 isOpen={isChatOpen}
                 onClose={() => setIsChatOpen(false)}
+                cases={cases}
             />
         )}
     </>
