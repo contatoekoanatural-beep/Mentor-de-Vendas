@@ -13,10 +13,7 @@ export default function Configuracoes() {
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
-    const [ccToken, setCcToken] = useState('');
-    const [hasExistingCcToken, setHasExistingCcToken] = useState(false);
-    const [showCcToken, setShowCcToken] = useState(false);
-    const [isSavingCcToken, setIsSavingCcToken] = useState(false);
+
 
     const [rcToken, setRcToken] = useState('');
     const [hasExistingRcToken, setHasExistingRcToken] = useState(false);
@@ -38,9 +35,7 @@ export default function Configuracoes() {
                 if (settings && typeof settings.geminiApiKey === 'string' && settings.geminiApiKey.length > 10) {
                     setHasExistingKey(true);
                 }
-                if (settings && typeof settings.convertechatToken === 'string' && settings.convertechatToken.length > 5) {
-                    setHasExistingCcToken(true);
-                }
+
                 if (settings && typeof settings.respondechatToken === 'string' && settings.respondechatToken.length > 5) {
                     setHasExistingRcToken(true);
                 }
@@ -93,30 +88,7 @@ export default function Configuracoes() {
         setIsSaving(false);
     };
 
-    const handleSaveCcToken = async () => {
-        const trimmed = ccToken.trim();
-        if (!trimmed) {
-            addToast('Cole o token do ConverteChat antes de salvar.', 'error');
-            return;
-        }
-        if (trimmed.length < 5) {
-            addToast('O token parece inválido (muito curto).', 'error');
-            return;
-        }
 
-        setIsSavingCcToken(true);
-        try {
-            await saveAppSettings({ convertechatToken: trimmed });
-            setHasExistingCcToken(true);
-            setCcToken('');
-            setShowCcToken(false);
-            addToast('Token do ConverteChat salvo com sucesso!', 'success');
-        } catch (error) {
-            console.error('Error saving ConverteChat token:', error);
-            addToast('Erro ao salvar o token do ConverteChat.', 'error');
-        }
-        setIsSavingCcToken(false);
-    };
 
     const handleSaveRcToken = async () => {
         const trimmed = rcToken.trim();
@@ -464,116 +436,7 @@ export default function Configuracoes() {
             {/* Aba Canais */}
             {activeTab === 'canais' && (
                 <>
-                    {/* ConverteChat Token Section */}
-                    <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                borderRadius: '50%',
-                                background: 'var(--bg-card-elevated)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: 'var(--primary)',
-                            }}>
-                                <Plug size={20} />
-                            </div>
-                            <div>
-                                <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    Token ConverteChat
-                                </h3>
-                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                                    Token do canal no ConverteChat (Conexões → Copiar token). Usado para enviar as respostas ao WhatsApp.
-                                </p>
-                            </div>
-                        </div>
 
-                        {/* Status indicator */}
-                        {!isLoading && (
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 'var(--space-2)',
-                                padding: 'var(--space-3) var(--space-4)',
-                                borderRadius: 'var(--radius-md)',
-                                backgroundColor: hasExistingCcToken ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
-                                marginBottom: 'var(--spacing-md)',
-                            }}>
-                                {hasExistingCcToken ? (
-                                    <>
-                                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>
-                                            Token configurado
-                                        </span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>
-                                            Nenhum token configurado
-                                        </span>
-                                    </>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Input */}
-                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
-                                {hasExistingCcToken ? 'Substituir token' : 'Colar token do ConverteChat'}
-                            </label>
-                            <div style={{ position: 'relative' }}>
-                                <input
-                                    type={showCcToken ? 'text' : 'password'}
-                                    value={ccToken}
-                                    onChange={(e) => setCcToken(e.target.value)}
-                                    placeholder={hasExistingCcToken ? 'Cole o novo token para substituir...' : 'Cole o token do ConverteChat aqui...'}
-                                    disabled={isSavingCcToken}
-                                    style={{
-                                        width: '100%',
-                                        padding: '14px',
-                                        paddingRight: '48px',
-                                        background: 'var(--bg-input)',
-                                        border: '1px solid var(--border-subtle)',
-                                        borderRadius: 'var(--radius-md)',
-                                        color: 'var(--text-primary)',
-                                        fontSize: 'var(--text-sm)',
-                                        fontFamily: 'var(--font-mono)',
-                                    }}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowCcToken(!showCcToken)}
-                                    style={{
-                                        position: 'absolute',
-                                        right: '12px',
-                                        top: '50%',
-                                        transform: 'translateY(-50%)',
-                                        background: 'none',
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        color: 'var(--text-tertiary)',
-                                        padding: '4px',
-                                    }}
-                                    title={showCcToken ? 'Ocultar' : 'Mostrar'}
-                                >
-                                    {showCcToken ? <EyeOff size={16} /> : <Eye size={16} />}
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Save button */}
-                        <button
-                            onClick={handleSaveCcToken}
-                            className="btn btn-primary"
-                            disabled={!ccToken.trim() || isSavingCcToken}
-                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                        >
-                            <Save size={16} />
-                            <span>{isSavingCcToken ? 'Salvando...' : 'Salvar token'}</span>
-                        </button>
-                    </div>
 
                     {/* Responde Chat Token Section */}
                     <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
