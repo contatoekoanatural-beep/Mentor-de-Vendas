@@ -3,10 +3,10 @@
 // ========================================
 
 import { useEffect, useState, useRef } from 'react';
-import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2 } from 'lucide-react';
+import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2, Bell } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing } from '../services/firebase';
 
 // ----------------------------------------
 // Helpers
@@ -142,6 +142,25 @@ export default function Conversas() {
             );
         } catch (error) {
             console.error('Erro ao alterar estado da IA:', error);
+        }
+        setSaving(false);
+    };
+
+    // Toggle remarketingAtivo field
+    const toggleRemarketing = async () => {
+        if (!selected || saving) return;
+        const novoRemarketing = !(selected.remarketingAtivo !== false);
+        setSaving(true);
+        try {
+            await setConversationRemarketing(selected.id, novoRemarketing);
+            // Update local state immediately
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id === selected.id ? { ...c, remarketingAtivo: novoRemarketing } : c
+                )
+            );
+        } catch (error) {
+            console.error('Erro ao alterar estado do remarketing:', error);
         }
         setSaving(false);
     };
@@ -533,6 +552,16 @@ export default function Conversas() {
                                             <span>Excluir</span>
                                         </button>
                                     )}
+                                    <button
+                                        className={`conv-toggle-ativo ${selected.remarketingAtivo !== false ? 'conv-toggle-ativo--on' : 'conv-toggle-ativo--off'}`}
+                                        onClick={toggleRemarketing}
+                                        disabled={saving}
+                                        title={selected.remarketingAtivo !== false ? 'Desativar remarketing para este cliente' : 'Ativar remarketing para este cliente'}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                                    >
+                                        <Bell size={14} />
+                                        <span>{saving ? 'Salvando...' : selected.remarketingAtivo !== false ? 'Remarketing On' : 'Remarketing Off'}</span>
+                                    </button>
                                     <button
                                         className={`conv-toggle-ativo ${selected.ativo === true ? 'conv-toggle-ativo--on' : 'conv-toggle-ativo--off'}`}
                                         onClick={toggleAtivo}

@@ -588,6 +588,9 @@ export const subscribeConversations = (
 export const setConversationAtivo = (id: string, ativo: boolean) =>
     updateDocument(COLLECTIONS.conversations, id, { ativo });
 
+export const setConversationRemarketing = (id: string, remarketingAtivo: boolean) =>
+    updateDocument(COLLECTIONS.conversations, id, { remarketingAtivo });
+
 export const setConversationArquivada = (id: string, arquivada: boolean) =>
     updateDocument(COLLECTIONS.conversations, id, { arquivada });
 

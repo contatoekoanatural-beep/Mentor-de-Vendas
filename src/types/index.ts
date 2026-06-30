@@ -555,6 +555,7 @@ export interface Conversation {
     agenteSlug: string;
     messages: ConversationMessage[];
     ativo?: boolean; // toggle: Patrícia só responde se true
+    remarketingAtivo?: boolean; // toggle: se false, esta conversa não recebe remarketing
     arquivada?: boolean; // toggle: se a conversa foi arquivada
     updatedAt: any; // Firestore Timestamp or Unix number
     status?: string;
