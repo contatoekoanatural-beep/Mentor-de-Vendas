@@ -970,7 +970,7 @@ async function processarRemarketing() {
     const data = doc.data();
     analisadas++;
 
-    if (data.leadPronto === true || data.remarketingEnviado === true) {
+    if (data.leadPronto === true || data.remarketingEnviado === true || data.remarketingAtivo === false) {
       continue;
     }
 
