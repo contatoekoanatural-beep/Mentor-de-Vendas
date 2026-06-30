@@ -584,6 +584,21 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       return response.status(200).json({ ignored: true, reason: "numero_nao_encontrado" });
     }
 
+    logger.info("DIAG_MIDIA_PAYLOAD", {
+      numero,
+      type: request.body.message?.type,
+      mediaUrl: request.body.message?.mediaUrl,
+      messageKeys: Object.keys(request.body.message || {}),
+      rawKeys: Object.keys(raw || {}),
+      imageMessageKeys: raw?.imageMessage ? Object.keys(raw.imageMessage) : null,
+      stickerMessageKeys: raw?.stickerMessage ? Object.keys(raw.stickerMessage) : null,
+      candidateUrls: {
+        msgMediaUrl: request.body.message?.mediaUrl,
+        imageUrl: raw?.imageMessage?.url,
+        stickerUrl: raw?.stickerMessage?.url
+      }
+    });
+
     const agenteSlug = request.query.agente || null;
 
     // 7. Extrair texto da mensagem
