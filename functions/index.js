@@ -591,6 +591,19 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         respostaLimpa = respostaLimpa.slice(0, -3).trim();
       }
 
+      // Conferência final anti-resposta-dupla: enquanto o Gemini gerava esta
+      // resposta, o cliente pode ter enviado outra mensagem. Se isso ocorreu,
+      // descartamos esta resposta (não grava histórico, não dispara webhook,
+      // não envia) — a execução mais nova responderá de forma consolidada.
+      const convSnapPreSend = await convRef.get();
+      const ultimoTsPreSend = convSnapPreSend.exists ? convSnapPreSend.data().ultimaMensagemTs : null;
+      if (ultimoTsPreSend !== meuTs) {
+        logger.info("webhookRespondeChat — resposta descartada, mensagem mais nova chegou durante a geracao", {
+          numero, meuTs, ultimoTsPreSend,
+        });
+        return response.status(200).json({ ignored: "superseded" });
+      }
+
       // Gravar histórico no Firestore (resposta da IA limpa)
       const agora = Date.now();
       historicoAtualizado.push({ role: "model", text: respostaLimpa, ts: agora });
