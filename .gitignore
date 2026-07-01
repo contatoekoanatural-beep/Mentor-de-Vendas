@@ -16,6 +16,9 @@ dist-ssr
 # Firebase runtime config (pode conter segredos)
 .runtimeconfig.json
 
+# Cache local de deploy do Firebase Hosting
+.firebase/
+
 # Arquivos temporários de recuperação de functions
 functions_backup_source.zip
 functions_backup_extracted/
