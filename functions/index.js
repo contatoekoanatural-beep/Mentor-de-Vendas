@@ -209,6 +209,16 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       return response.status(200).json({ error: "semSlug" });
     }
 
+    // 8b. Só atende quem já passou pelo webhook de final de funil (ativarAgente).
+    // Se a conversa nunca foi criada por lá, o lead nem entra no sistema.
+    const convDocId = numero + "_" + agenteSlug;
+    const convRef = admin.firestore().collection("conversations").doc(convDocId);
+    const convSnapInicial = await convRef.get();
+    if (!convSnapInicial.exists) {
+      logger.info("webhookRespondeChat — lead fora do funil de automacao, ignorado", { numero, agenteSlug });
+      return response.status(200).json({ ignored: true, reason: "fora_do_funil" });
+    }
+
     const agentSnap = await admin
       .firestore()
       .collection("agents")
@@ -247,12 +257,8 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       return response.status(200).json({ error: "semChave" });
     }
 
-    // Configurar referências da conversa e reservar timestamp para debounce no início
-    const convDocId = numero + "_" + agenteSlug;
-    const convRef = admin.firestore().collection("conversations").doc(convDocId);
+    // Reservar timestamp para debounce no início (convRef já validado acima)
     const meuTs = Date.now();
-
-    // Gravação leve preliminar para reservar o lugar na disputa de debounce
     await convRef.set({ ultimaMensagemTs: meuTs }, { merge: true });
 
     // --- TRANSCRIÇÃO DE ÁUDIO (Gatilho) ---
@@ -417,27 +423,25 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     let iaAcionadaEnviado = convSnap.exists ? !!convSnap.data().iaAcionadaEnviado : false;
 
     // 12. Checar interruptor: só responde se ativo === true
-    let ativo = convSnap.exists && convSnap.data().ativo === true;
+    const ativo = convSnap.exists && convSnap.data().ativo === true;
     const estavaArquivada = convSnap.exists && convSnap.data().arquivada === true;
 
-    if (estavaArquivada) {
-      ativo = true; // Força ativo=true na memória para seguir ao Caminho B e responder de imediato
-    }
-
     if (!ativo) {
-      // Gravar a mensagem do cliente no histórico (para visibilidade na bancada)
+      // Gravar a mensagem do cliente no histórico (para visibilidade na bancada).
+      // Não força reativação: respeita desligamento manual do vendedor ou reset de conversa.
       historico.push({ role: "user", text: texto || "[áudio recebido]", ts: Date.now() });
-      await convRef.set(
-        {
-          messages: historico,
-          numero,
-          agenteSlug,
-          status: "ativa",
-          remarketingEnviado: false,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const payloadDesligado = {
+        messages: historico,
+        numero,
+        agenteSlug,
+        status: "ativa",
+        remarketingEnviado: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (estavaArquivada) {
+        payloadDesligado.arquivada = false;
+      }
+      await convRef.set(payloadDesligado, { merge: true });
       logger.info("webhookRespondeChat — patricia desligada para este cliente, mensagem gravada sem resposta", { numero, agenteSlug });
       return response.status(200).json({ ignored: "desligado", numero });
     }
@@ -466,8 +470,6 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
     if (estavaArquivada) {
       payloadCaminhoB.arquivada = false;
-      payloadCaminhoB.ativo = true;
-      payloadCaminhoB.leadProntoWebhookEnviado = false; // Reset do dedup no desarquivamento/reativação
     }
 
     await convRef.set(payloadCaminhoB, { merge: true });
