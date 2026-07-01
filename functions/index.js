@@ -247,6 +247,14 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       return response.status(200).json({ error: "semChave" });
     }
 
+    // Configurar referências da conversa e reservar timestamp para debounce no início
+    const convDocId = numero + "_" + agenteSlug;
+    const convRef = admin.firestore().collection("conversations").doc(convDocId);
+    const meuTs = Date.now();
+
+    // Gravação leve preliminar para reservar o lugar na disputa de debounce
+    await convRef.set({ ultimaMensagemTs: meuTs }, { merge: true });
+
     // --- TRANSCRIÇÃO DE ÁUDIO (Gatilho) ---
     const isAudio = request.body.message?.type === "audio" && request.body.message?.mediaUrl;
     let transcricaoSucesso = false;
@@ -400,9 +408,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       maxMessages: agent.maxMessages,
     }, cases);
 
-    // 11. Ler histórico de conversa do Firestore
-    const convDocId = numero + "_" + agenteSlug;
-    const convRef = admin.firestore().collection("conversations").doc(convDocId);
+    // 11. Ler histórico de conversa do Firestore (referências já criadas anteriormente)
     const convSnap = await convRef.get();
     const historico = convSnap.exists && Array.isArray(convSnap.data().messages)
       ? convSnap.data().messages
@@ -442,7 +448,6 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     const debounceSeg = agent.debounceSegundos ?? 8;
     const debounceMs = Math.max(0, Math.min(30, debounceSeg)) * 1000;
 
-    const meuTs = Date.now();
     const textoParaHistorico = (!texto)
       ? "[áudio recebido]"
       : texto;
