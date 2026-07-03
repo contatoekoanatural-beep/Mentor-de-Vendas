@@ -550,7 +550,11 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
           contents,
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 2048,
+            // Gemini 2.5 Flash usa tokens de "thinking" que contam no limite de
+            // saída. Desligamos (budget 0) para evitar respostas cortadas em
+            // objeções longas, reduzir custo e ganhar velocidade.
+            thinkingConfig: { thinkingBudget: 0 },
           },
         }),
       });
