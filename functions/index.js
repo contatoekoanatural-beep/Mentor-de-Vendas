@@ -148,11 +148,11 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     const raw = request.body.message.raw || {};
     const key = raw.key || {};
 
-    // 4. Ignorar mensagens próprias (anti-loop)
-    if (key.fromMe === true || raw.IsFromMe === true) {
-      logger.info("webhookRespondeChat — mensagem propria ignorada");
-      return response.status(200).json({ ignored: true, reason: "mensagem_propria" });
-    }
+    // 4. Detectar mensagem de SAÍDA (própria da IA, funil, remarketing ou
+    // atendente humano). Ela NUNCA gera resposta (anti-loop). Mais abaixo, se
+    // não for eco da IA e a conversa já existir, guardamos no histórico para
+    // dar contexto à IA (evita responder "no escuro").
+    const isFromMe = key.fromMe === true || raw.IsFromMe === true;
 
     // 5. Ignorar grupos
     if (key.remoteJid && key.remoteJid.includes('@g.us')) {
@@ -217,6 +217,33 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     if (!convSnapInicial.exists) {
       logger.info("webhookRespondeChat — lead fora do funil de automacao, ignorado", { numero, agenteSlug });
       return response.status(200).json({ ignored: true, reason: "fora_do_funil" });
+    }
+
+    // 8c. Mensagem de SAÍDA (funil, remarketing ou atendente humano): NÃO gera
+    // resposta. Se não for eco da própria IA, guarda no histórico para a IA ter
+    // contexto do que já foi dito ao cliente (evita responder "no escuro").
+    if (isFromMe) {
+      const textoSaida = (texto && texto.trim()) ? texto.trim() : "[mensagem enviada ao cliente]";
+      const msgsSaida = Array.isArray(convSnapInicial.data().messages)
+        ? convSnapInicial.data().messages
+        : [];
+      // Dedup: se o texto já aparece nas últimas mensagens da IA (inclusive
+      // partes de um split), é eco da própria IA — ignora.
+      const recentesModel = msgsSaida.slice(-6).filter((m) => m.role === "model");
+      const ecoDaIA = recentesModel.some(
+        (m) => typeof m.text === "string" && m.text.includes(textoSaida)
+      );
+      if (ecoDaIA) {
+        logger.info("webhookRespondeChat — saida eco da propria IA, ignorada", { numero });
+        return response.status(200).json({ ignored: true, reason: "eco_ia" });
+      }
+      msgsSaida.push({ role: "model", text: textoSaida, ts: Date.now() });
+      await convRef.set(
+        { messages: msgsSaida, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+      logger.info("webhookRespondeChat — saida externa guardada no historico", { numero, textoSaida });
+      return response.status(200).json({ ignored: true, reason: "saida_externa_guardada" });
     }
 
     const agentSnap = await admin
