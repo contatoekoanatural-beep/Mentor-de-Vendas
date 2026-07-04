@@ -36,3 +36,9 @@ functions_backup_extracted/
 
 # Backups de conversas (dados sensíveis de clientes)
 backup_conversations_*.json
+
+# Saída gerada pelo Graphify (grafo de conhecimento, regenerável com /graphify .)
+graphify-out/
+
+# Config local/pessoal do Claude Code (não versionar)
+.claude/settings.local.json
