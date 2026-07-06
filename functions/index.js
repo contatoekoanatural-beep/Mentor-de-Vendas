@@ -1092,7 +1092,18 @@ async function processarRemarketing() {
           corpo: corpoResposta,
         });
 
+        // Registra no histórico que enviamos remarketing, para a IA ter
+        // contexto quando o cliente responder (ex.: "Sim") e não responder no
+        // escuro. É uma nota interna do sistema (não é enviada ao cliente).
+        const msgsRemarket = Array.isArray(data.messages) ? [...data.messages] : [];
+        msgsRemarket.push({
+          role: "model",
+          text: "[Enviamos uma mensagem de remarketing perguntando se o cliente ainda tem interesse no perfume. A próxima resposta do cliente é uma reação a essa mensagem de remarketing.]",
+          ts: Date.now(),
+        });
+
         await doc.ref.set({
+          messages: msgsRemarket,
           remarketingEnviado: true,
           arquivada: true,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
