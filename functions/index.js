@@ -269,12 +269,27 @@ async function limparBuffersAntigos() {
   return snap.size;
 }
 
-/** Marca a conversa como "IA falhou" para ela aparecer destacada na bancada. */
-async function marcarFalhaIA(convRef, motivo, contexto = {}) {
+/**
+ * Marca a conversa como "IA falhou" e avisa o vendedor.
+ *
+ * O flag pinta a conversa de vermelho na bancada, mas é passivo: só serve se
+ * alguém estiver olhando a tela. O webhook avisa no WhatsApp na hora — em
+ * 09/07/2026 o Gemini caiu por ~50min e o vendedor só descobriu à noite, por
+ * acaso, com o cliente esperando desde a tarde.
+ *
+ * Dispara no máximo uma vez por conversa: `falhaIAWebhookEnviado` é zerado
+ * assim que a IA volta a responder, então uma nova queda avisa de novo.
+ */
+async function marcarFalhaIA(convRef, motivo, contexto = {}, settingsData = null) {
   logger.error("webhookRespondeChat — IA sem resposta, conversa marcada para atendimento humano", {
     ...contexto, motivo: String(motivo).slice(0, 300),
   });
+
+  let jaAvisou = false;
   try {
+    const snap = await convRef.get();
+    jaAvisou = snap.exists && snap.data().falhaIAWebhookEnviado === true;
+
     await convRef.set({
       falhaIA: true,
       falhaIAMotivo: String(motivo).slice(0, 500),
@@ -283,6 +298,41 @@ async function marcarFalhaIA(convRef, motivo, contexto = {}) {
     }, { merge: true });
   } catch (err) {
     logger.error("marcarFalhaIA — nao consegui gravar o flag", { ...contexto, error: String(err) });
+  }
+
+  if (jaAvisou || !settingsData) return;
+
+  const webhookConfig = settingsData.webhooks?.falhaIA || {};
+  const webhookUrl = webhookConfig.url;
+  const webhookAtivo = webhookConfig.ativo !== false;
+
+  if (!webhookAtivo || !webhookUrl) {
+    logger.info("Disparo de falha da IA pulado: webhook inativo ou sem URL", {
+      ...contexto, ativo: webhookAtivo, hasUrl: !!webhookUrl,
+    });
+    return;
+  }
+
+  try {
+    logger.info("Disparando webhook de falha da IA", { ...contexto, url: webhookUrl });
+    const responseHook = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_phone: contexto.numero || "",
+        client_name: "IA FALHOU",
+      }).toString(),
+    });
+    const corpoResposta = await responseHook.text();
+    logger.info("Resposta do webhook de falha da IA", {
+      status: responseHook.status, corpo: corpoResposta.slice(0, 200),
+    });
+
+    if (responseHook.status >= 200 && responseHook.status < 300) {
+      await convRef.set({ falhaIAWebhookEnviado: true }, { merge: true });
+    }
+  } catch (err) {
+    logger.error("Erro ao disparar webhook de falha da IA", { ...contexto, error: String(err) });
   }
 }
 
@@ -826,7 +876,8 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
           },
         }, modelosGemini, { numero, agenteSlug, etapa: "resposta" });
       } catch (errGemini) {
-        await marcarFalhaIA(convRef, errGemini, { numero, agenteSlug });
+        await marcarFalhaIA(convRef, errGemini, { numero, agenteSlug },
+          settingsSnap.exists ? settingsSnap.data() : null);
         return response
           .status(200)
           .json({ error: "geminiApiError", detalhe: String(errGemini) });
@@ -876,7 +927,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       if (!respostaLimpa && !leadPronto) {
         await marcarFalhaIA(convRef, "Gemini devolveu resposta vazia", {
           numero, agenteSlug, finishReason: geminiData.candidates?.[0]?.finishReason,
-        });
+        }, settingsSnap.exists ? settingsSnap.data() : null);
         return response.status(200).json({ error: "respostaVazia", numero });
       }
 
@@ -888,7 +939,9 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         messages: historicoAtualizado,
         numero,
         agenteSlug,
+        // Zera o alerta: uma nova queda volta a avisar no WhatsApp.
         falhaIA: false,
+        falhaIAWebhookEnviado: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 

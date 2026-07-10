@@ -26,6 +26,8 @@ export default function Configuracoes() {
     const [remAtivo, setRemAtivo] = useState(true);
     const [iaUrl, setIaUrl] = useState('');
     const [iaAtivo, setIaAtivo] = useState(true);
+    const [falhaUrl, setFalhaUrl] = useState('');
+    const [falhaAtivo, setFalhaAtivo] = useState(true);
     const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
 
     useEffect(() => {
@@ -52,6 +54,10 @@ export default function Configuracoes() {
                     if (whs.iaAcionada) {
                         setIaUrl(whs.iaAcionada.url || '');
                         setIaAtivo(whs.iaAcionada.ativo !== false);
+                    }
+                    if (whs.falhaIA) {
+                        setFalhaUrl(whs.falhaIA.url || '');
+                        setFalhaAtivo(whs.falhaIA.ativo !== false);
                     }
                 }
             } catch (error) {
@@ -130,6 +136,10 @@ export default function Configuracoes() {
                 "webhooks.iaAcionada": {
                     url: iaUrl.trim(),
                     ativo: iaAtivo
+                },
+                "webhooks.falhaIA": {
+                    url: falhaUrl.trim(),
+                    ativo: falhaAtivo
                 }
             });
             addToast('Configurações de Webhooks salvas com sucesso!', 'success');
@@ -291,6 +301,43 @@ export default function Configuracoes() {
                             type="text"
                             value={iaUrl}
                             onChange={(e) => setIaUrl(e.target.value)}
+                            placeholder="https://"
+                            disabled={isSavingWebhooks}
+                            style={{
+                                width: '100%',
+                                padding: '12px',
+                                background: 'var(--bg-input)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-md)',
+                                color: 'var(--text-primary)',
+                                fontSize: 'var(--text-sm)',
+                                fontFamily: 'var(--font-mono)',
+                            }}
+                        />
+                    </div>
+
+                    {/* Webhook Falha da IA */}
+                    <div style={{ marginBottom: 'var(--spacing-lg)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                            <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+                                IA Falhou
+                            </label>
+                            <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={falhaAtivo}
+                                    onChange={(e) => setFalhaAtivo(e.target.checked)}
+                                />
+                                <span>Ativo</span>
+                            </label>
+                        </div>
+                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
+                            Avisa quando a IA não conseguiu responder e o cliente ficou esperando. Dispara uma vez por conversa, até a IA voltar a responder.
+                        </p>
+                        <input
+                            type="text"
+                            value={falhaUrl}
+                            onChange={(e) => setFalhaUrl(e.target.value)}
                             placeholder="https://"
                             disabled={isSavingWebhooks}
                             style={{
