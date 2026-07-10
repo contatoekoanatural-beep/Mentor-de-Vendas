@@ -560,6 +560,9 @@ export interface Conversation {
     updatedAt: any; // Firestore Timestamp or Unix number
     status?: string;
     leadPronto?: boolean;
+    falhaIA?: boolean; // a IA não conseguiu responder: precisa de atendimento humano
+    falhaIAMotivo?: string;
+    falhaIATs?: number;
 }
 
 

@@ -1,4 +1,5 @@
 import type { FlowDraft } from '../../types';
+import { GEMINI_API_URL } from '../geminiModel';
 
 export interface InterpretationResult {
     type: 'questions' | 'draft';
@@ -13,7 +14,6 @@ export class MentorInterpreter {
         userAnswers?: string[]
     ): Promise<InterpretationResult> {
         const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
-        const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
         if (!GEMINI_API_KEY) {
             return {

@@ -594,6 +594,10 @@ export const setConversationRemarketing = (id: string, remarketingAtivo: boolean
 export const setConversationArquivada = (id: string, arquivada: boolean) =>
     updateDocument(COLLECTIONS.conversations, id, { arquivada });
 
+/** Baixa o alerta de falha da IA depois que o vendedor assumiu a conversa. */
+export const limparFalhaIA = (id: string) =>
+    updateDocument(COLLECTIONS.conversations, id, { falhaIA: false });
+
 export const resetConversation = (id: string) =>
     updateDocument(COLLECTIONS.conversations, id, {
         messages: [],
@@ -601,6 +605,7 @@ export const resetConversation = (id: string) =>
         ultimaMensagemTs: null,
         leadPronto: false,
         remarketingEnviado: false,
+        falhaIA: false,
         updatedAt: serverTimestamp()
     });
 

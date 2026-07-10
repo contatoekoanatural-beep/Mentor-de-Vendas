@@ -3,10 +3,10 @@
 // ========================================
 
 import { getAppSettings } from './firebase';
+import { GEMINI_API_URL } from './geminiModel';
 import type { AgentCase } from '../types';
 
 const ENV_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 // ----------------------------------------
 // Managed API Key (Firestore > .env)

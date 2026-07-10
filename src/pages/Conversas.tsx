@@ -3,10 +3,10 @@
 // ========================================
 
 import { useEffect, useState, useRef } from 'react';
-import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2, Bell } from 'lucide-react';
+import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2, Bell, AlertTriangle } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA } from '../services/firebase';
 
 // ----------------------------------------
 // Helpers
@@ -180,6 +180,23 @@ export default function Conversas() {
             );
         } catch (error) {
             console.error('Erro ao alterar estado de arquivamento:', error);
+        }
+        setSaving(false);
+    };
+
+    // Baixa o alerta de falha da IA (o vendedor assumiu a conversa)
+    const handleLimparFalha = async () => {
+        if (!selected || saving) return;
+        setSaving(true);
+        try {
+            await limparFalhaIA(selected.id);
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id === selected.id ? { ...c, falhaIA: false } : c
+                )
+            );
+        } catch (error) {
+            console.error('Erro ao limpar alerta de falha da IA:', error);
         }
         setSaving(false);
     };
@@ -427,6 +444,9 @@ export default function Conversas() {
                                                                 {conv.leadPronto === true && (
                                                                     <span title="Lead Pronto" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center' }}>🔥</span>
                                                                 )}
+                                                                {conv.falhaIA === true && (
+                                                                    <span title="A IA não respondeu — cliente esperando" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center' }}>⚠️</span>
+                                                                )}
                                                             </div>
                                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                                         </div>
@@ -469,6 +489,9 @@ export default function Conversas() {
                                                 {conv.leadPronto === true && (
                                                     <span title="Lead Pronto" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center' }}>🔥</span>
                                                 )}
+                                                {conv.falhaIA === true && (
+                                                    <span title="A IA não respondeu — cliente esperando" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center' }}>⚠️</span>
+                                                )}
                                             </div>
                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                         </div>
@@ -477,6 +500,11 @@ export default function Conversas() {
                                             {conv.leadPronto === true && (
                                                 <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>
                                                     🔥 Lead pronto
+                                                </span>
+                                            )}
+                                            {conv.falhaIA === true && (
+                                                <span className="badge badge-error" style={{ fontSize: '10px', padding: '1px 6px' }}>
+                                                    ⚠️ IA falhou
                                                 </span>
                                             )}
                                         </div>
@@ -573,6 +601,39 @@ export default function Conversas() {
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Alerta: a IA não conseguiu responder e o cliente ficou esperando */}
+                            {selected.falhaIA === true && (
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 'var(--space-2)',
+                                        padding: 'var(--space-3)',
+                                        borderBottom: '1px solid var(--color-border)',
+                                        backgroundColor: 'rgba(239, 68, 68, 0.1)'
+                                    }}
+                                >
+                                    <AlertTriangle size={18} style={{ color: '#ef4444', flexShrink: 0 }} />
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontWeight: 600 }}>
+                                            A IA não respondeu esta mensagem
+                                        </div>
+                                        <div className="text-muted" style={{ fontSize: '12px' }}>
+                                            {selected.falhaIATs ? formatTime(selected.falhaIATs) + ' — ' : ''}
+                                            {truncate(selected.falhaIAMotivo || 'motivo não registrado', 160)}
+                                        </div>
+                                    </div>
+                                    <button
+                                        className="conv-toggle-ativo conv-toggle-ativo--off"
+                                        onClick={handleLimparFalha}
+                                        disabled={saving}
+                                        title="Baixar o alerta depois de assumir a conversa"
+                                    >
+                                        {saving ? 'Salvando...' : 'Resolvido'}
+                                    </button>
+                                </div>
+                            )}
 
                             {/* Messages */}
                             <div className="chat-messages">

@@ -32,6 +32,97 @@ const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/E
 const REMARKETING_THRESHOLD_HORAS = 22;
 
 // ----------------------------------------
+// Gemini
+// ----------------------------------------
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const GEMINI_MODELO_PADRAO = "gemini-3.5-flash";
+const GEMINI_MODELO_FALLBACK = "gemini-2.5-flash";
+const GEMINI_TENTATIVAS = 3;
+
+/** Modelos a tentar, em ordem. settings/app.geminiModel troca o primário sem exigir deploy. */
+function resolverModelosGemini(settingsData) {
+  const configurado = settingsData && typeof settingsData.geminiModel === "string"
+    ? settingsData.geminiModel.trim()
+    : "";
+  const primario = configurado || GEMINI_MODELO_PADRAO;
+  return primario === GEMINI_MODELO_FALLBACK
+    ? [primario]
+    : [primario, GEMINI_MODELO_FALLBACK];
+}
+
+/**
+ * Chama generateContent com retry e fallback de modelo. Devolve o JSON da API.
+ *
+ * 429/5xx/rede são transitórios e repetidos no mesmo modelo com backoff. 400/404
+ * não adianta repetir: pula direto para o próximo modelo da lista — em 09/07/2026
+ * o gemini-2.5-flash devolveu 404 "no longer available" por ~50min e, sem
+ * fallback, a IA não respondeu a ninguém nesse intervalo.
+ *
+ * Lança se todos os modelos falharem.
+ */
+async function chamarGemini(apiKey, corpo, modelos, contexto = {}) {
+  let ultimoErro = null;
+
+  for (const modelo of modelos) {
+    for (let tentativa = 1; tentativa <= GEMINI_TENTATIVAS; tentativa++) {
+      try {
+        const res = await fetch(`${GEMINI_BASE_URL}/${modelo}:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(corpo),
+        });
+
+        if (res.ok) {
+          if (modelo !== modelos[0]) {
+            logger.warn("chamarGemini — atendido pelo modelo de fallback", { ...contexto, modelo });
+          }
+          return await res.json();
+        }
+
+        const body = await res.text();
+        ultimoErro = new Error(`Gemini ${res.status} (${modelo}): ${body}`);
+
+        const transitorio = res.status === 429 || res.status >= 500;
+        logger.warn("chamarGemini — erro na API", {
+          ...contexto, modelo, tentativa, status: res.status, transitorio,
+          body: body.slice(0, 300),
+        });
+
+        if (!transitorio) break;
+      } catch (err) {
+        ultimoErro = err;
+        logger.warn("chamarGemini — excecao de rede", {
+          ...contexto, modelo, tentativa, error: String(err),
+        });
+      }
+
+      if (tentativa < GEMINI_TENTATIVAS) {
+        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, tentativa - 1)));
+      }
+    }
+  }
+
+  throw ultimoErro || new Error("Gemini: falha desconhecida");
+}
+
+/** Marca a conversa como "IA falhou" para ela aparecer destacada na bancada. */
+async function marcarFalhaIA(convRef, motivo, contexto = {}) {
+  logger.error("webhookRespondeChat — IA sem resposta, conversa marcada para atendimento humano", {
+    ...contexto, motivo: String(motivo).slice(0, 300),
+  });
+  try {
+    await convRef.set({
+      falhaIA: true,
+      falhaIAMotivo: String(motivo).slice(0, 500),
+      falhaIATs: Date.now(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    logger.error("marcarFalhaIA — nao consegui gravar o flag", { ...contexto, error: String(err) });
+  }
+}
+
+// ----------------------------------------
 // ping — Cloud Function de teste
 // Retorna um JSON simples pra confirmar que o deploy funcionou.
 // ----------------------------------------
@@ -284,6 +375,8 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       return response.status(200).json({ error: "semChave" });
     }
 
+    const modelosGemini = resolverModelosGemini(settingsSnap.exists ? settingsSnap.data() : null);
+
     // Reservar timestamp para debounce no início (convRef já validado acima)
     const meuTs = Date.now();
     await convRef.set({ ultimaMensagemTs: meuTs }, { merge: true });
@@ -306,34 +399,23 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         const base64Audio = Buffer.from(audioBuffer).toString("base64");
 
         logger.info("webhookRespondeChat — enviando audio para transcricao no Gemini", { numero });
-        const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-        
-        const transResponse = await fetch(`${geminiUrl}?key=${geminiApiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: "audio/mpeg",
-                    data: base64Audio
-                  }
-                },
-                {
-                  text: "Transcreva exatamente o que foi dito neste áudio, em português. Responda apenas com a transcrição, sem comentários."
+
+        const transData = await chamarGemini(geminiApiKey, {
+          contents: [{
+            parts: [
+              {
+                inlineData: {
+                  mimeType: "audio/mpeg",
+                  data: base64Audio
                 }
-              ]
-            }]
-          })
-        });
+              },
+              {
+                text: "Transcreva exatamente o que foi dito neste áudio, em português. Responda apenas com a transcrição, sem comentários."
+              }
+            ]
+          }]
+        }, modelosGemini, { numero, etapa: "transcricao" });
 
-        if (!transResponse.ok) {
-          const errBody = await transResponse.text();
-          throw new Error(`Erro na API Gemini de Transcricao: ${transResponse.status} - ${errBody}`);
-        }
-
-        const transData = await transResponse.json();
         const transcricao = transData.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
         if (transcricao.trim()) {
@@ -382,34 +464,23 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
           : (request.body.message?.raw?.imageMessage?.mimetype || "image/jpeg");
 
         logger.info("webhookRespondeChat — enviando imagem/figurinha para leitura no Gemini", { numero, mimeType });
-        const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
-        const visionResponse = await fetch(`${geminiUrl}?key=${geminiApiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: mimeType,
-                    data: base64Media
-                  }
-                },
-                {
-                  text: "Você está lendo uma imagem ou figurinha que um cliente enviou em uma conversa de vendas pelo WhatsApp. Descreva de forma objetiva e em português o que a imagem mostra. Se houver QUALQUER texto na imagem (endereço, nome, número, comprovante, documento), transcreva-o fielmente. Se for uma figurinha, descreva o gesto ou emoção que ela expressa (ex.: positivo/joinha, ok, mãos pedindo, coração, risada). Responda apenas com a descrição e o texto extraído, sem comentários, sem saudação e sem inventar nada que não esteja visível."
+        const visionData = await chamarGemini(geminiApiKey, {
+          contents: [{
+            parts: [
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: base64Media
                 }
-              ]
-            }]
-          })
-        });
+              },
+              {
+                text: "Você está lendo uma imagem ou figurinha que um cliente enviou em uma conversa de vendas pelo WhatsApp. Descreva de forma objetiva e em português o que a imagem mostra. Se houver QUALQUER texto na imagem (endereço, nome, número, comprovante, documento), transcreva-o fielmente. Se for uma figurinha, descreva o gesto ou emoção que ela expressa (ex.: positivo/joinha, ok, mãos pedindo, coração, risada). Responda apenas com a descrição e o texto extraído, sem comentários, sem saudação e sem inventar nada que não esteja visível."
+              }
+            ]
+          }]
+        }, modelosGemini, { numero, etapa: "visao" });
 
-        if (!visionResponse.ok) {
-          const errBody = await visionResponse.text();
-          throw new Error(`Erro na API Gemini de Visão: ${visionResponse.status} - ${errBody}`);
-        }
-
-        const visionData = await visionResponse.json();
         const descricao = visionData.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
         if (descricao.trim()) {
@@ -563,14 +634,10 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         parts: [{ text: m.text }],
       }));
 
-      // Chamar Gemini via fetch
-      const geminiUrl =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-
-      const geminiResponse = await fetch(`${geminiUrl}?key=${geminiApiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // Chamar Gemini (com retry e fallback de modelo)
+      let geminiData;
+      try {
+        geminiData = await chamarGemini(geminiApiKey, {
           systemInstruction: {
             parts: [{ text: systemPrompt }],
           },
@@ -578,27 +645,20 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 2048,
-            // Gemini 2.5 Flash usa tokens de "thinking" que contam no limite de
+            // O Gemini Flash usa tokens de "thinking" que contam no limite de
             // saída. Desligamos (budget 0) para evitar respostas cortadas em
             // objeções longas, reduzir custo e ganhar velocidade.
             thinkingConfig: { thinkingBudget: 0 },
           },
-        }),
-      });
-
-      if (!geminiResponse.ok) {
-        const errBody = await geminiResponse.text();
-        logger.error("webhookRespondeChat — erro na API Gemini", {
-          status: geminiResponse.status,
-          body: errBody,
-        });
+        }, modelosGemini, { numero, agenteSlug, etapa: "resposta" });
+      } catch (errGemini) {
+        await marcarFalhaIA(convRef, errGemini, { numero, agenteSlug });
         return response
           .status(200)
-          .json({ error: "geminiApiError", detalhe: errBody });
+          .json({ error: "geminiApiError", detalhe: String(errGemini) });
       }
 
       // Extrair texto da resposta
-      const geminiData = await geminiResponse.json();
       const respostaCrua =
         geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
@@ -635,6 +695,17 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         return response.status(200).json({ ignored: "superseded" });
       }
 
+      // Gemini pode devolver 200 com texto vazio (filtro de segurança, corte de
+      // token). Sem isso o cliente também ficaria no vácuo, só que sem erro no
+      // log. Exceção: em [LEAD_PRONTO] o silêncio é esperado — quem assume é o
+      // humano, e o webhook de lead ainda precisa disparar.
+      if (!respostaLimpa && !leadPronto) {
+        await marcarFalhaIA(convRef, "Gemini devolveu resposta vazia", {
+          numero, agenteSlug, finishReason: geminiData.candidates?.[0]?.finishReason,
+        });
+        return response.status(200).json({ error: "respostaVazia", numero });
+      }
+
       // Gravar histórico no Firestore (resposta da IA limpa)
       const agora = Date.now();
       historicoAtualizado.push({ role: "model", text: respostaLimpa, ts: agora });
@@ -643,6 +714,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         messages: historicoAtualizado,
         numero,
         agenteSlug,
+        falhaIA: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
