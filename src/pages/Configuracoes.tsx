@@ -2,7 +2,211 @@ import { useState, useEffect } from 'react';
 import { getAppSettings, saveAppSettings } from '../services/firebase';
 import { setGeminiKey } from '../services/aiService';
 import { useToast } from '../contexts/ToastContext';
-import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe } from 'lucide-react';
+import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe, Pencil, X, Lock } from 'lucide-react';
+
+// ----------------------------------------
+// Webhooks
+// ----------------------------------------
+
+type ChaveWebhook = 'leadPronto' | 'remarketing' | 'iaAcionada' | 'falhaIA';
+
+interface ConfigWebhook {
+    url: string;
+    ativo: boolean;
+}
+
+const WEBHOOKS_VAZIOS: Record<ChaveWebhook, ConfigWebhook> = {
+    leadPronto: { url: '', ativo: true },
+    remarketing: { url: '', ativo: true },
+    iaAcionada: { url: '', ativo: true },
+    falhaIA: { url: '', ativo: true },
+};
+
+const DEFINICOES: { chave: ChaveWebhook; titulo: string; descricao: string; notaVazio?: string }[] = [
+    {
+        chave: 'leadPronto',
+        titulo: 'Lead Pronto',
+        descricao: 'Avisa quando o cliente escolheu a forma de pagamento e está pronto para fechar.',
+        notaVazio: 'Sem URL aqui, o sistema usa uma URL padrão embutida no código.',
+    },
+    {
+        chave: 'remarketing',
+        titulo: 'Remarketing',
+        descricao: 'Dispara a mensagem de reengajamento em conversas paradas há ~22h.',
+    },
+    {
+        chave: 'iaAcionada',
+        titulo: 'IA Acionada',
+        descricao: 'Avisa na primeira vez que a IA assume uma conversa.',
+    },
+    {
+        chave: 'falhaIA',
+        titulo: 'IA Falhou',
+        descricao: 'Avisa quando a IA não conseguiu responder e o cliente ficou esperando. Uma vez por conversa, até a IA voltar a responder.',
+    },
+];
+
+/** Esconde o miolo da URL: protocolo, host e os últimos caracteres bastam para reconhecê-la. */
+function mascarar(url: string): string {
+    if (!url) return '';
+    const cauda = url.slice(-6);
+    try {
+        const u = new URL(url);
+        return `${u.protocol}//${u.host}/••••••••${cauda}`;
+    } catch {
+        return `${url.slice(0, 16)}••••••••${cauda}`;
+    }
+}
+
+interface PropsCampo {
+    titulo: string;
+    descricao: string;
+    notaVazio?: string;
+    cfg: ConfigWebhook;
+    original: ConfigWebhook;
+    salvando: boolean;
+    onChange: (cfg: ConfigWebhook) => void;
+}
+
+/**
+ * Um webhook. Nasce trancado: a URL vem mascarada e só vira campo editável
+ * depois de um clique explícito em "Editar" — sem isso, um clique distraído
+ * altera a URL e o botão de salvar leva a alteração junto sem ninguém ver.
+ */
+function CampoWebhook({ titulo, descricao, notaVazio, cfg, original, salvando, onChange }: PropsCampo) {
+    const [editando, setEditando] = useState(false);
+    const [revelado, setRevelado] = useState(false);
+
+    const alterado = cfg.url !== original.url || cfg.ativo !== original.ativo;
+    const configurado = cfg.url.trim().length > 0;
+    const urlInvalida = configurado && !/^https?:\/\//i.test(cfg.url.trim());
+
+    const cancelar = () => {
+        onChange(original);
+        setEditando(false);
+        setRevelado(false);
+    };
+
+    return (
+        <div style={{
+            marginBottom: 'var(--spacing-md)',
+            padding: 'var(--space-3)',
+            borderRadius: 'var(--radius-md)',
+            border: `1px solid ${alterado ? 'var(--primary)' : 'var(--border-subtle)'}`,
+            background: 'var(--bg-card-elevated)',
+        }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', minWidth: 0 }}>
+                    <span className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+                        {titulo}
+                    </span>
+                    {configurado ? (
+                        <span className="badge badge-success" style={{ fontSize: '10px', padding: '1px 6px' }}>configurado</span>
+                    ) : (
+                        <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>sem URL</span>
+                    )}
+                    {alterado && (
+                        <span className="badge badge-info" style={{ fontSize: '10px', padding: '1px 6px' }}>alterado</span>
+                    )}
+                </div>
+                <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)', flexShrink: 0 }}>
+                    <input
+                        type="checkbox"
+                        checked={cfg.ativo}
+                        disabled={salvando}
+                        onChange={(e) => onChange({ ...cfg, ativo: e.target.checked })}
+                    />
+                    <span>Ativo</span>
+                </label>
+            </div>
+
+            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', margin: 'var(--space-2) 0' }}>
+                {descricao}
+            </p>
+
+            {editando ? (
+                <>
+                    <input
+                        type="text"
+                        autoFocus
+                        value={cfg.url}
+                        onChange={(e) => onChange({ ...cfg, url: e.target.value })}
+                        placeholder="https://backend.respondechat.ai/webhook/..."
+                        disabled={salvando}
+                        style={{
+                            width: '100%',
+                            padding: '12px',
+                            background: 'var(--bg-input)',
+                            border: `1px solid ${urlInvalida ? 'var(--error, #ef4444)' : 'var(--border-subtle)'}`,
+                            borderRadius: 'var(--radius-md)',
+                            color: 'var(--text-primary)',
+                            fontSize: 'var(--text-sm)',
+                            fontFamily: 'var(--font-mono)',
+                        }}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={cancelar} disabled={salvando}>
+                            <X size={14} /> Cancelar
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => { setEditando(false); setRevelado(false); }}
+                            disabled={salvando || urlInvalida}
+                        >
+                            <Lock size={14} /> Pronto
+                        </button>
+                        {urlInvalida && (
+                            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--error, #ef4444)' }}>
+                                A URL precisa começar com https://
+                            </span>
+                        )}
+                    </div>
+                </>
+            ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                    <code style={{
+                        flex: 1,
+                        minWidth: 0,
+                        padding: '10px 12px',
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-md)',
+                        color: configurado ? 'var(--text-secondary)' : 'var(--text-tertiary)',
+                        fontSize: 'var(--text-xs)',
+                        fontFamily: 'var(--font-mono)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                    }}>
+                        {configurado
+                            ? (revelado ? cfg.url : mascarar(cfg.url))
+                            : (notaVazio || 'Nenhuma URL configurada — este evento não é enviado.')}
+                    </code>
+                    {configurado && (
+                        <button
+                            type="button"
+                            className="btn btn-ghost btn-icon"
+                            onClick={() => setRevelado((v) => !v)}
+                            title={revelado ? 'Ocultar URL' : 'Revelar URL'}
+                        >
+                            {revelado ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        className="btn btn-ghost btn-icon"
+                        onClick={() => { setEditando(true); setRevelado(true); }}
+                        disabled={salvando}
+                        title="Editar URL"
+                    >
+                        <Pencil size={16} />
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
 
 export default function Configuracoes() {
     const { addToast } = useToast();
@@ -20,15 +224,13 @@ export default function Configuracoes() {
     const [showRcToken, setShowRcToken] = useState(false);
     const [isSavingRcToken, setIsSavingRcToken] = useState(false);
 
-    const [lpUrl, setLpUrl] = useState('');
-    const [lpAtivo, setLpAtivo] = useState(true);
-    const [remUrl, setRemUrl] = useState('');
-    const [remAtivo, setRemAtivo] = useState(true);
-    const [iaUrl, setIaUrl] = useState('');
-    const [iaAtivo, setIaAtivo] = useState(true);
-    const [falhaUrl, setFalhaUrl] = useState('');
-    const [falhaAtivo, setFalhaAtivo] = useState(true);
+    const [webhooks, setWebhooks] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
+    const [webhooksOriginais, setWebhooksOriginais] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
     const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
+
+    const chavesAlteradas = (Object.keys(webhooks) as ChaveWebhook[]).filter(
+        (k) => webhooks[k].url !== webhooksOriginais[k].url || webhooks[k].ativo !== webhooksOriginais[k].ativo
+    );
 
     useEffect(() => {
         const loadSettings = async () => {
@@ -43,22 +245,17 @@ export default function Configuracoes() {
                 }
                 if (settings && settings.webhooks) {
                     const whs = settings.webhooks as any;
-                    if (whs.leadPronto) {
-                        setLpUrl(whs.leadPronto.url || '');
-                        setLpAtivo(whs.leadPronto.ativo !== false);
+                    const carregado = { ...WEBHOOKS_VAZIOS };
+                    for (const { chave } of DEFINICOES) {
+                        if (whs[chave]) {
+                            carregado[chave] = {
+                                url: whs[chave].url || '',
+                                ativo: whs[chave].ativo !== false,
+                            };
+                        }
                     }
-                    if (whs.remarketing) {
-                        setRemUrl(whs.remarketing.url || '');
-                        setRemAtivo(whs.remarketing.ativo !== false);
-                    }
-                    if (whs.iaAcionada) {
-                        setIaUrl(whs.iaAcionada.url || '');
-                        setIaAtivo(whs.iaAcionada.ativo !== false);
-                    }
-                    if (whs.falhaIA) {
-                        setFalhaUrl(whs.falhaIA.url || '');
-                        setFalhaAtivo(whs.falhaIA.ativo !== false);
-                    }
+                    setWebhooks({ ...carregado });
+                    setWebhooksOriginais({ ...carregado });
                 }
             } catch (error) {
                 console.error('Error loading settings:', error);
@@ -122,27 +319,47 @@ export default function Configuracoes() {
     };
 
     const handleSaveWebhooks = async () => {
+        if (chavesAlteradas.length === 0) return;
+
+        const invalida = chavesAlteradas.find((k) => {
+            const url = webhooks[k].url.trim();
+            return url.length > 0 && !/^https?:\/\//i.test(url);
+        });
+        if (invalida) {
+            addToast(`A URL de "${DEFINICOES.find((d) => d.chave === invalida)!.titulo}" precisa começar com https://`, 'error');
+            return;
+        }
+
+        // Apagar a URL de um webhook ativo o desliga na prática, sem aviso nenhum.
+        const apagada = chavesAlteradas.find(
+            (k) => webhooks[k].ativo && !webhooks[k].url.trim() && webhooksOriginais[k].url.trim()
+        );
+        if (apagada) {
+            const titulo = DEFINICOES.find((d) => d.chave === apagada)!.titulo;
+            if (!window.confirm(`Você apagou a URL de "${titulo}", que está marcado como Ativo. Sem URL, esse evento deixa de ser enviado. Salvar mesmo assim?`)) {
+                return;
+            }
+        }
+
         setIsSavingWebhooks(true);
         try {
-            await saveAppSettings({
-                "webhooks.leadPronto": {
-                    url: lpUrl.trim(),
-                    ativo: lpAtivo
-                },
-                "webhooks.remarketing": {
-                    url: remUrl.trim(),
-                    ativo: remAtivo
-                },
-                "webhooks.iaAcionada": {
-                    url: iaUrl.trim(),
-                    ativo: iaAtivo
-                },
-                "webhooks.falhaIA": {
-                    url: falhaUrl.trim(),
-                    ativo: falhaAtivo
-                }
-            });
-            addToast('Configurações de Webhooks salvas com sucesso!', 'success');
+            // Grava só o que mudou: assim uma edição num campo nunca sobrescreve os outros.
+            const payload: Record<string, ConfigWebhook> = {};
+            for (const chave of chavesAlteradas) {
+                payload[`webhooks.${chave}`] = {
+                    url: webhooks[chave].url.trim(),
+                    ativo: webhooks[chave].ativo,
+                };
+            }
+            await saveAppSettings(payload);
+
+            const salvos = { ...webhooks };
+            for (const chave of chavesAlteradas) salvos[chave] = { ...salvos[chave], url: salvos[chave].url.trim() };
+            setWebhooks(salvos);
+            setWebhooksOriginais(salvos);
+
+            const nomes = chavesAlteradas.map((k) => DEFINICOES.find((d) => d.chave === k)!.titulo).join(', ');
+            addToast(`Salvo: ${nomes}`, 'success');
         } catch (error) {
             console.error('Error saving webhooks:', error);
             addToast('Erro ao salvar as configurações de Webhooks.', 'error');
@@ -214,155 +431,42 @@ export default function Configuracoes() {
                         </div>
                     </div>
 
-                    {/* Webhook Lead Pronto */}
-                    <div style={{ marginBottom: 'var(--spacing-lg)', paddingBottom: 'var(--spacing-md)', borderBottom: '1px solid var(--border-subtle)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
-                            <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                                Lead Pronto
-                            </label>
-                            <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={lpAtivo}
-                                    onChange={(e) => setLpAtivo(e.target.checked)}
-                                />
-                                <span>Ativo</span>
-                            </label>
-                        </div>
-                        <input
-                            type="text"
-                            value={lpUrl}
-                            onChange={(e) => setLpUrl(e.target.value)}
-                            placeholder="https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE"
-                            disabled={isSavingWebhooks}
-                            style={{
-                                width: '100%',
-                                padding: '12px',
-                                background: 'var(--bg-input)',
-                                border: '1px solid var(--border-subtle)',
-                                borderRadius: 'var(--radius-md)',
-                                color: 'var(--text-primary)',
-                                fontSize: 'var(--text-sm)',
-                                fontFamily: 'var(--font-mono)',
-                            }}
+                    {DEFINICOES.map(({ chave, titulo, descricao, notaVazio }) => (
+                        <CampoWebhook
+                            key={chave}
+                            titulo={titulo}
+                            descricao={descricao}
+                            notaVazio={notaVazio}
+                            cfg={webhooks[chave]}
+                            original={webhooksOriginais[chave]}
+                            salvando={isSavingWebhooks}
+                            onChange={(cfg) => setWebhooks((prev) => ({ ...prev, [chave]: cfg }))}
                         />
-                    </div>
+                    ))}
 
-                    {/* Webhook Remarketing */}
-                    <div style={{ marginBottom: 'var(--spacing-lg)', paddingBottom: 'var(--spacing-md)', borderBottom: '1px solid var(--border-subtle)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
-                            <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                                Remarketing
-                            </label>
-                            <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={remAtivo}
-                                    onChange={(e) => setRemAtivo(e.target.checked)}
-                                />
-                                <span>Ativo</span>
-                            </label>
-                        </div>
-                        <input
-                            type="text"
-                            value={remUrl}
-                            onChange={(e) => setRemUrl(e.target.value)}
-                            placeholder="https://"
-                            disabled={isSavingWebhooks}
-                            style={{
-                                width: '100%',
-                                padding: '12px',
-                                background: 'var(--bg-input)',
-                                border: '1px solid var(--border-subtle)',
-                                borderRadius: 'var(--radius-md)',
-                                color: 'var(--text-primary)',
-                                fontSize: 'var(--text-sm)',
-                                fontFamily: 'var(--font-mono)',
-                            }}
-                        />
+                    {/* Salvar — grava só o que foi alterado */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                        <button
+                            onClick={handleSaveWebhooks}
+                            className="btn btn-primary"
+                            disabled={isSavingWebhooks || chavesAlteradas.length === 0}
+                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                        >
+                            <Save size={16} />
+                            <span>
+                                {isSavingWebhooks
+                                    ? 'Salvando...'
+                                    : chavesAlteradas.length === 0
+                                        ? 'Nada a salvar'
+                                        : `Salvar ${chavesAlteradas.length} alteraç${chavesAlteradas.length === 1 ? 'ão' : 'ões'}`}
+                            </span>
+                        </button>
+                        {chavesAlteradas.length > 0 && !isSavingWebhooks && (
+                            <span className="text-muted" style={{ fontSize: 'var(--text-xs)' }}>
+                                {chavesAlteradas.map((k) => DEFINICOES.find((d) => d.chave === k)!.titulo).join(', ')}
+                            </span>
+                        )}
                     </div>
-
-                    {/* Webhook IA Acionada */}
-                    <div style={{ marginBottom: 'var(--spacing-lg)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
-                            <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                                IA Acionada
-                            </label>
-                            <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={iaAtivo}
-                                    onChange={(e) => setIaAtivo(e.target.checked)}
-                                />
-                                <span>Ativo</span>
-                            </label>
-                        </div>
-                        <input
-                            type="text"
-                            value={iaUrl}
-                            onChange={(e) => setIaUrl(e.target.value)}
-                            placeholder="https://"
-                            disabled={isSavingWebhooks}
-                            style={{
-                                width: '100%',
-                                padding: '12px',
-                                background: 'var(--bg-input)',
-                                border: '1px solid var(--border-subtle)',
-                                borderRadius: 'var(--radius-md)',
-                                color: 'var(--text-primary)',
-                                fontSize: 'var(--text-sm)',
-                                fontFamily: 'var(--font-mono)',
-                            }}
-                        />
-                    </div>
-
-                    {/* Webhook Falha da IA */}
-                    <div style={{ marginBottom: 'var(--spacing-lg)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
-                            <label className="label-section" style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                                IA Falhou
-                            </label>
-                            <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={falhaAtivo}
-                                    onChange={(e) => setFalhaAtivo(e.target.checked)}
-                                />
-                                <span>Ativo</span>
-                            </label>
-                        </div>
-                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
-                            Avisa quando a IA não conseguiu responder e o cliente ficou esperando. Dispara uma vez por conversa, até a IA voltar a responder.
-                        </p>
-                        <input
-                            type="text"
-                            value={falhaUrl}
-                            onChange={(e) => setFalhaUrl(e.target.value)}
-                            placeholder="https://"
-                            disabled={isSavingWebhooks}
-                            style={{
-                                width: '100%',
-                                padding: '12px',
-                                background: 'var(--bg-input)',
-                                border: '1px solid var(--border-subtle)',
-                                borderRadius: 'var(--radius-md)',
-                                color: 'var(--text-primary)',
-                                fontSize: 'var(--text-sm)',
-                                fontFamily: 'var(--font-mono)',
-                            }}
-                        />
-                    </div>
-
-                    {/* Save button */}
-                    <button
-                        onClick={handleSaveWebhooks}
-                        className="btn btn-primary"
-                        disabled={isSavingWebhooks}
-                        style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                    >
-                        <Save size={16} />
-                        <span>{isSavingWebhooks ? 'Salvando...' : 'Salvar Webhooks'}</span>
-                    </button>
                 </div>
             )}
 
