@@ -105,6 +105,170 @@ async function chamarGemini(apiKey, corpo, modelos, contexto = {}) {
   throw ultimoErro || new Error("Gemini: falha desconhecida");
 }
 
+// ----------------------------------------
+// Buffer de mensagens que chegam durante o funil
+// ----------------------------------------
+const WEBHOOK_URL = "https://webhookrespondechat-2vqjvotywa-uc.a.run.app";
+const BUFFER_MAX_MSGS = 20;
+const BUFFER_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Quem escreve nos últimos segundos antes do ativarAgente está respondendo ao
+// áudio final do funil e apenas perdeu a corrida — merece resposta. Quem
+// escreve minutos antes está reagindo NO MEIO da automação (ex.: "Sim" para
+// "posso mandar os valores?", que o próprio funil já responde): esse não é
+// atendido, segue para o remarketing. Medido em 7 dias de log: mediana de 81s
+// entre a mensagem e o ativarAgente, e só ~2 msgs/semana abaixo de 5s.
+const BUFFER_JANELA_RESPOSTA_MS = 5000;
+
+function bufferRef(numero, agenteSlug) {
+  return admin.firestore().collection("pendingMessages").doc(numero + "_" + agenteSlug);
+}
+
+/** Tira thumbnails base64 do payload para ele caber no documento do Firestore. */
+function enxugarPayload(body) {
+  const copia = JSON.parse(JSON.stringify(body || {}));
+  const raw = copia?.message?.raw;
+  if (raw) {
+    for (const k of Object.keys(raw)) {
+      if (raw[k] && typeof raw[k] === "object") {
+        delete raw[k].JPEGThumbnail;
+        delete raw[k].jpegThumbnail;
+        delete raw[k].thumbnail;
+      }
+    }
+  }
+  if (JSON.stringify(copia).length > 200000) {
+    return { message: {
+      type: copia.message?.type,
+      body: copia.message?.body,
+      mediaUrl: copia.message?.mediaUrl,
+    } };
+  }
+  return copia;
+}
+
+/**
+ * Guarda uma mensagem que chegou antes de a conversa existir (funil rodando).
+ * Não chama Gemini e não transcreve mídia: as ~300 reações de meio de funil por
+ * semana continuam custando zero. O payload original da última fala do cliente
+ * é guardado para um eventual replay, que aí sim transcreve.
+ */
+async function bufferizarMensagem({ numero, agenteSlug, texto, isFromMe, body }) {
+  const tipo = body?.message?.type || "text";
+  const textoLimpo = (texto && texto.trim())
+    ? texto.trim()
+    : (tipo === "text" ? "" : (tipo === "audio" ? "[áudio recebido]" : "[mídia recebida]"));
+
+  if (!textoLimpo) {
+    logger.info("bufferizarMensagem — mensagem sem conteudo, ignorada", { numero, tipo });
+    return;
+  }
+
+  const ref = bufferRef(numero, agenteSlug);
+  const agora = Date.now();
+  const snap = await ref.get();
+  const anteriores = snap.exists && Array.isArray(snap.data().messages) ? snap.data().messages : [];
+
+  const dados = {
+    numero,
+    agenteSlug,
+    messages: [...anteriores, { role: isFromMe ? "model" : "user", text: textoLimpo, ts: agora }]
+      .slice(-BUFFER_MAX_MSGS),
+    criadoEm: (snap.exists && snap.data().criadoEm) || agora,
+    updatedAt: agora,
+  };
+
+  if (!isFromMe) {
+    dados.ultimoPayloadCliente = JSON.stringify(enxugarPayload(body));
+    dados.ultimoTsCliente = agora;
+  }
+
+  await ref.set(dados, { merge: true });
+  logger.info("webhookRespondeChat — mensagem bufferizada (funil ainda rodando)", {
+    numero, agenteSlug, isFromMe, total: dados.messages.length,
+  });
+}
+
+/**
+ * Chamado pelo ativarAgente ao fim do funil. Move as mensagens bufferizadas
+ * para o histórico da conversa e, se a última fala do cliente chegou nos
+ * últimos BUFFER_JANELA_RESPOSTA_MS, reenvia o payload dela ao webhook para
+ * que a IA responda de verdade (reaproveitando debounce, transcrição e envio).
+ */
+async function consumirBuffer(numero, agenteSlug, convRef) {
+  const ref = bufferRef(numero, agenteSlug);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+
+  const data = snap.data();
+  const bufferizadas = Array.isArray(data.messages) ? data.messages : [];
+  await ref.delete();
+  if (!bufferizadas.length) return;
+
+  const ultima = bufferizadas[bufferizadas.length - 1];
+  const respondeAgora =
+    ultima.role === "user" &&
+    !!data.ultimoPayloadCliente &&
+    (Date.now() - (data.ultimoTsCliente || 0)) <= BUFFER_JANELA_RESPOSTA_MS;
+
+  // Se vamos reenviar a última mensagem ao webhook, ela não entra aqui: o
+  // próprio webhook a grava (já transcrita, se for áudio).
+  const paraHistorico = respondeAgora ? bufferizadas.slice(0, -1) : bufferizadas;
+
+  if (paraHistorico.length) {
+    const convSnap = await convRef.get();
+    const historico = convSnap.exists && Array.isArray(convSnap.data().messages)
+      ? convSnap.data().messages
+      : [];
+    await convRef.set({
+      messages: [...historico, ...paraHistorico],
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+
+  logger.info("ativarAgente — buffer do funil consumido", {
+    numero, agenteSlug,
+    bufferizadas: bufferizadas.length,
+    gravadas: paraHistorico.length,
+    respondeAgora,
+    atrasoMs: Date.now() - (data.ultimoTsCliente || 0),
+  });
+
+  if (!respondeAgora) return;
+
+  try {
+    const body = JSON.parse(data.ultimoPayloadCliente);
+    body.replayDoBuffer = true;
+    const res = await fetch(`${WEBHOOK_URL}?agente=${encodeURIComponent(agenteSlug)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    logger.info("ativarAgente — replay enviado ao webhook", { numero, status: res.status });
+  } catch (err) {
+    logger.error("ativarAgente — falha no replay da mensagem bufferizada", {
+      numero, error: String(err),
+    });
+  }
+}
+
+/** Buffers de leads que nunca chegaram ao fim do funil viram lixo: limpa por idade. */
+async function limparBuffersAntigos() {
+  const corte = Date.now() - BUFFER_TTL_MS;
+  const snap = await admin.firestore()
+    .collection("pendingMessages")
+    .where("criadoEm", "<", corte)
+    .limit(500)
+    .get();
+
+  if (snap.empty) return 0;
+  const lote = admin.firestore().batch();
+  snap.docs.forEach((d) => lote.delete(d.ref));
+  await lote.commit();
+  logger.info("limparBuffersAntigos — buffers expirados removidos", { total: snap.size });
+  return snap.size;
+}
+
 /** Marca a conversa como "IA falhou" para ela aparecer destacada na bancada. */
 async function marcarFalhaIA(convRef, motivo, contexto = {}) {
   logger.error("webhookRespondeChat — IA sem resposta, conversa marcada para atendimento humano", {
@@ -300,14 +464,24 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       return response.status(200).json({ error: "semSlug" });
     }
 
-    // 8b. Só atende quem já passou pelo webhook de final de funil (ativarAgente).
-    // Se a conversa nunca foi criada por lá, o lead nem entra no sistema.
+    // 8b. A conversa só nasce no último passo do funil (ativarAgente). Enquanto
+    // ela não existe, a mensagem NÃO gera resposta — mas também não é jogada
+    // fora: vai para um buffer que o ativarAgente consome ao criar a conversa.
+    // Assim a IA herda o contexto do que já foi dito (funil e cliente) e, se o
+    // cliente respondeu ao áudio final perdendo a corrida por segundos, o
+    // ativarAgente reenvia a mensagem para cá e ela é atendida.
     const convDocId = numero + "_" + agenteSlug;
     const convRef = admin.firestore().collection("conversations").doc(convDocId);
     const convSnapInicial = await convRef.get();
     if (!convSnapInicial.exists) {
-      logger.info("webhookRespondeChat — lead fora do funil de automacao, ignorado", { numero, agenteSlug });
-      return response.status(200).json({ ignored: true, reason: "fora_do_funil" });
+      if (request.body.replayDoBuffer === true) {
+        // Não pode acontecer: o replay só parte do ativarAgente, que acabou de
+        // criar a conversa. Se acontecer, bufferizar de novo criaria um laço.
+        logger.warn("webhookRespondeChat — replay sem conversa, ignorado", { numero, agenteSlug });
+        return response.status(200).json({ ignored: true, reason: "replay_sem_conversa" });
+      }
+      await bufferizarMensagem({ numero, agenteSlug, texto, isFromMe, body: request.body });
+      return response.status(200).json({ ignored: true, reason: "bufferizado" });
     }
 
     // 8c. Mensagem de SAÍDA (funil, remarketing ou atendente humano): NÃO gera
@@ -998,6 +1172,11 @@ exports.ativarAgente = onRequest(async (request, response) => {
 
     logger.info("ativarAgente — sucesso", { numero: numeroNormalizado, agenteSlug });
 
+    // 5. Herdar o que o cliente escreveu enquanto o funil rodava. Este é o
+    // último nó do fluxo, então uma eventual espera pelo replay não atrasa
+    // nada para o cliente.
+    await consumirBuffer(numeroNormalizado, agenteSlug, convRef);
+
     return response.status(200).json({
       ok: true,
       ativado: numeroNormalizado,
@@ -1033,6 +1212,15 @@ exports.verificarRemarketingAgendado = onSchedule(
       logger.error("verificarRemarketingAgendado — excecao", {
         error: String(err),
         stack: err.stack,
+      });
+    }
+
+    // Buffers de leads que nunca terminaram o funil nunca são consumidos.
+    try {
+      await limparBuffersAntigos();
+    } catch (err) {
+      logger.error("verificarRemarketingAgendado — falha ao limpar buffers", {
+        error: String(err),
       });
     }
   }
