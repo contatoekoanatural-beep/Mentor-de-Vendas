@@ -28,3 +28,20 @@ mensagem de cliente.
 |---|---|
 | `base-patricia-2026-07-10-0024.txt` | Base antiga, 24.491 chars. Crescida por remendos sucessivos: o gate de pagamento aparecia 6× e o parágrafo do `[LEAD_PRONTO]` 4×. |
 | `base-patricia-2026-07-10-0919.txt` | Reescrita completa, 11.889 chars (~50% menos tokens). Sem perda de regra ou fato — só desduplicação. Muda comportamento em três pontos: respostas em 2 mensagens por padrão, frases do PIX/cartão sem "abaixo" (o WhatsApp reordena mensagens de dígitos soltos), e respostas fixas de site/CNPJ com pergunta de avanço adaptada ao dado que falta. |
+| `base-patricia-2026-07-10-1028.txt` | 13.008 chars. Aperta o formato (máx. 2 frases e 200 chars por mensagem, uma dúvida por vez, última mensagem só com a pergunta) e adiciona a trava factual da garantia. Ver abaixo. |
+
+## Por que a trava factual existe
+
+Ao encurtar as respostas por prompt, o `gemini-3.5-flash` passou a comprimir a
+garantia e a **inventar promessa comercial**: "devolvemos se você não gostar",
+"em até 7 dias". Isso não existe — reembolso é só para problema de entrega,
+troca é só para problema no produto. Medido em replay contra a conversa do
+Estefano (554198968413): sem a trava, 2 de 8 amostras inventaram; com a trava,
+0 de 8. **Nunca aperte o tamanho sem reforçar os fatos junto.**
+
+Nesse mesmo replay, o tamanho da resposta caiu de ~953 para ~453 caracteres, e
+a maior mensagem de 574 para 189. O modelo respeita o limite de 200 chars em
+~75% das mensagens — melhora muito, mas não é régua.
+
+Descoberta relacionada: a verbosidade veio do **modelo**, não do prompt. Com a
+base antiga, o 3.5-flash já escrevia ~921 chars onde o 2.5-flash escrevia ~725.
