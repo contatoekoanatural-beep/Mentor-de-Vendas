@@ -626,6 +626,10 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     });
 
     const agenteSlug = request.query.agente || null;
+    // Canal de origem (ex.: claro2, claro4) vem da URL do webhook (?...&canal=claro2).
+    // Cada conexão do Responde Chat tem token próprio; a resposta precisa sair pelo
+    // MESMO canal que recebeu a mensagem, senão vai tudo pelo canal padrão.
+    const canal = request.query.canal || null;
 
     // 7. Extrair texto da mensagem
     let texto = request.body.message?.body || "";
@@ -1091,6 +1095,10 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       if (leadPronto) {
         updateData.leadPronto = true;
       }
+      // Guarda o canal na conversa (útil para debug e para envios futuros fora do webhook).
+      if (canal) {
+        updateData.canal = canal;
+      }
 
       await convRef.set(updateData, { merge: true });
 
@@ -1296,13 +1304,17 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       }
     }
 
-    // 19. Ler token do Responde Chat (reaproveitando settingsSnap já lido)
-    const respondechatToken = settingsSnap.exists
-      ? settingsSnap.data().respondechatToken
-      : null;
+    // 19. Token do Responde Chat POR CANAL: cada conexão tem seu token, e a resposta
+    // precisa sair pelo mesmo canal que recebeu. respondechatTokens[canal] manda;
+    // sem canal ou sem token específico, cai no token padrão (respondechatToken).
+    const settingsDataSend = settingsSnap.exists ? settingsSnap.data() : {};
+    const respondechatToken =
+      (canal && settingsDataSend.respondechatTokens && settingsDataSend.respondechatTokens[canal]) ||
+      settingsDataSend.respondechatToken ||
+      null;
 
     if (!respondechatToken) {
-      logger.warn("webhookRespondeChat — sem token respondechat");
+      logger.warn("webhookRespondeChat — sem token respondechat", { canal });
       return response.status(200).json({
         error: "semToken",
         mensagens,
@@ -1310,6 +1322,11 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     }
 
     // 20. Enviar cada mensagem ao WhatsApp via Responde Chat
+    logger.info("webhookRespondeChat — enviando", {
+      numero, canal,
+      tokenPorCanal: !!(canal && settingsDataSend.respondechatTokens && settingsDataSend.respondechatTokens[canal]),
+      qtdMensagens: mensagens.length,
+    });
     let enviadas = 0;
 
     for (let i = 0; i < mensagens.length; i++) {

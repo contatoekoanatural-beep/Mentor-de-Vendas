@@ -232,6 +232,13 @@ export default function Configuracoes() {
     const [showRcToken, setShowRcToken] = useState(false);
     const [isSavingRcToken, setIsSavingRcToken] = useState(false);
 
+    // Token da 2ª conexão (Claro 2). Cada conexão do Responde Chat tem token
+    // próprio; a resposta sai pelo canal que recebeu (URL do webhook ...&canal=claro2).
+    const [rcTokenClaro2, setRcTokenClaro2] = useState('');
+    const [hasClaro2Token, setHasClaro2Token] = useState(false);
+    const [showClaro2Token, setShowClaro2Token] = useState(false);
+    const [isSavingClaro2Token, setIsSavingClaro2Token] = useState(false);
+
     const [webhooks, setWebhooks] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
     const [webhooksOriginais, setWebhooksOriginais] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
     const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
@@ -268,6 +275,12 @@ export default function Configuracoes() {
 
                 if (settings && typeof settings.respondechatToken === 'string' && settings.respondechatToken.length > 5) {
                     setHasExistingRcToken(true);
+                }
+                if (settings && settings.respondechatTokens && typeof settings.respondechatTokens === 'object') {
+                    const tokens = settings.respondechatTokens as Record<string, unknown>;
+                    if (typeof tokens.claro2 === 'string' && tokens.claro2.length > 5) {
+                        setHasClaro2Token(true);
+                    }
                 }
                 if (settings && settings.webhooks) {
                     const whs = settings.webhooks as Record<string, { url?: string; ativo?: boolean }>;
@@ -401,6 +414,32 @@ export default function Configuracoes() {
             addToast('Erro ao salvar o Asaas.', 'error');
         }
         setIsSavingAsaas(false);
+    };
+
+    const handleSaveClaro2Token = async () => {
+        const trimmed = rcTokenClaro2.trim();
+        if (!trimmed) {
+            addToast('Cole o token do Claro 2 antes de salvar.', 'error');
+            return;
+        }
+        if (trimmed.length < 5) {
+            addToast('O token parece inválido (muito curto).', 'error');
+            return;
+        }
+
+        setIsSavingClaro2Token(true);
+        try {
+            // Objeto aninhado: merge preserva outros tokens de canal já salvos.
+            await saveAppSettings({ respondechatTokens: { claro2: trimmed } });
+            setHasClaro2Token(true);
+            setRcTokenClaro2('');
+            setShowClaro2Token(false);
+            addToast('Token do Claro 2 salvo com sucesso!', 'success');
+        } catch (error) {
+            console.error('Error saving Claro 2 token:', error);
+            addToast('Erro ao salvar o token do Claro 2.', 'error');
+        }
+        setIsSavingClaro2Token(false);
     };
 
     const handleSaveWebhooks = async () => {
@@ -785,6 +824,110 @@ export default function Configuracoes() {
                         >
                             <Save size={16} />
                             <span>{isSavingRcToken ? 'Salvando...' : 'Salvar token'}</span>
+                        </button>
+                    </div>
+
+                    {/* Token do 2º número — Claro 2 */}
+                    <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                background: 'var(--bg-card-elevated)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: 'var(--primary)',
+                            }}>
+                                <Plug size={20} />
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    Token do 2º número (Claro 2)
+                                </h3>
+                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                    Token da conexão Claro 2. Faz a Patrícia responder pelo mesmo número que recebeu (URL do webhook com <code>&amp;canal=claro2</code>).
+                                </p>
+                            </div>
+                        </div>
+
+                        {!isLoading && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 'var(--space-2)',
+                                padding: 'var(--space-3) var(--space-4)',
+                                borderRadius: 'var(--radius-md)',
+                                backgroundColor: hasClaro2Token ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
+                                marginBottom: 'var(--spacing-md)',
+                            }}>
+                                {hasClaro2Token ? (
+                                    <>
+                                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>Token configurado</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>Nenhum token configurado</span>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                                {hasClaro2Token ? 'Substituir token' : 'Colar token do Claro 2'}
+                            </label>
+                            <div style={{ position: 'relative' }}>
+                                <input
+                                    type={showClaro2Token ? 'text' : 'password'}
+                                    value={rcTokenClaro2}
+                                    onChange={(e) => setRcTokenClaro2(e.target.value)}
+                                    placeholder={hasClaro2Token ? 'Cole o novo token para substituir...' : 'Cole o token do Claro 2 (Copiar token na conexão)...'}
+                                    disabled={isSavingClaro2Token}
+                                    style={{
+                                        width: '100%',
+                                        padding: '14px',
+                                        paddingRight: '48px',
+                                        background: 'var(--bg-input)',
+                                        border: '1px solid var(--border-subtle)',
+                                        borderRadius: 'var(--radius-md)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: 'var(--text-sm)',
+                                        fontFamily: 'var(--font-mono)',
+                                    }}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowClaro2Token(!showClaro2Token)}
+                                    style={{
+                                        position: 'absolute',
+                                        right: '12px',
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: 'var(--text-tertiary)',
+                                        padding: '4px',
+                                    }}
+                                    title={showClaro2Token ? 'Ocultar' : 'Mostrar'}
+                                >
+                                    {showClaro2Token ? <EyeOff size={16} /> : <Eye size={16} />}
+                                </button>
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={handleSaveClaro2Token}
+                            className="btn btn-primary"
+                            disabled={!rcTokenClaro2.trim() || isSavingClaro2Token}
+                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                        >
+                            <Save size={16} />
+                            <span>{isSavingClaro2Token ? 'Salvando...' : 'Salvar token'}</span>
                         </button>
                     </div>
 
