@@ -12,9 +12,12 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 
 const navItems = [
-    { path: '/produtos', label: 'Agentes', icon: Bot, ownerOnly: false },
+    // Agentes (prompt) e Configurações (chaves/webhooks) só para o dono; o
+    // vendedor (ex.: acompanhamento) fica só com Conversas, sem risco de
+    // encostar no prompt ou nas integrações.
+    { path: '/produtos', label: 'Agentes', icon: Bot, ownerOnly: true },
     { path: '/conversas', label: 'Conversas', icon: MessageSquare, ownerOnly: false },
-    { path: '/configuracoes', label: 'Configurações', icon: Settings, ownerOnly: false },
+    { path: '/configuracoes', label: 'Configurações', icon: Settings, ownerOnly: true },
 ];
 
 export default function Sidebar() {
