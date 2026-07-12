@@ -428,15 +428,18 @@ export default function Configuracoes() {
 
         setIsSavingWebhooks(true);
         try {
-            // Grava só o que mudou: assim uma edição num campo nunca sobrescreve os outros.
-            const payload: Record<string, ConfigWebhook> = {};
-            for (const chave of chavesAlteradas) {
-                payload[`webhooks.${chave}`] = {
+            // setDoc+merge NÃO trata chave pontilhada ("webhooks.x") como caminho:
+            // criava um campo literal e a edição não pegava na releitura. Gravamos o
+            // objeto webhooks ANINHADO inteiro — o estado tem todas as chaves, então
+            // nada se perde, e o merge preserva os demais campos de settings.
+            const webhooksSalvar: Record<ChaveWebhook, ConfigWebhook> = { ...WEBHOOKS_VAZIOS };
+            for (const chave of Object.keys(webhooks) as ChaveWebhook[]) {
+                webhooksSalvar[chave] = {
                     url: webhooks[chave].url.trim(),
                     ativo: webhooks[chave].ativo,
                 };
             }
-            await saveAppSettings(payload);
+            await saveAppSettings({ webhooks: webhooksSalvar });
 
             const salvos = { ...webhooks };
             for (const chave of chavesAlteradas) salvos[chave] = { ...salvos[chave], url: salvos[chave].url.trim() };
