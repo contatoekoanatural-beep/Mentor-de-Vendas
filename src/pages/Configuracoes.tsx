@@ -2,7 +2,15 @@ import { useState, useEffect } from 'react';
 import { getAppSettings, saveAppSettings } from '../services/firebase';
 import { setGeminiKey } from '../services/aiService';
 import { useToast } from '../contexts/ToastContext';
-import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe, Pencil, X, Lock } from 'lucide-react';
+import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe, Pencil, X, Lock, FileText } from 'lucide-react';
+
+// ----------------------------------------
+// Asaas — geração automática de boleto
+// ----------------------------------------
+const ASAAS_URLS: Record<'sandbox' | 'producao', string> = {
+    sandbox: 'https://api-sandbox.asaas.com/v3',
+    producao: 'https://api.asaas.com/v3',
+};
 
 // ----------------------------------------
 // Webhooks
@@ -228,6 +236,24 @@ export default function Configuracoes() {
     const [webhooksOriginais, setWebhooksOriginais] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
     const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
 
+    // Asaas: chave (secreta, write-only) + config não-secreta (ativo/ambiente/vencimento)
+    const [asaasKey, setAsaasKey] = useState('');
+    const [hasExistingAsaasKey, setHasExistingAsaasKey] = useState(false);
+    const [showAsaasKey, setShowAsaasKey] = useState(false);
+
+    const [asaasAtivo, setAsaasAtivo] = useState(true);
+    const [asaasAmbiente, setAsaasAmbiente] = useState<'sandbox' | 'producao'>('sandbox');
+    const [asaasVencimento, setAsaasVencimento] = useState(3);
+    const [asaasCfgOriginal, setAsaasCfgOriginal] = useState<{ ativo: boolean; ambiente: 'sandbox' | 'producao'; vencimento: number }>({ ativo: true, ambiente: 'sandbox', vencimento: 3 });
+    const [isSavingAsaas, setIsSavingAsaas] = useState(false);
+
+    const asaasCfgAlterada =
+        asaasAtivo !== asaasCfgOriginal.ativo ||
+        asaasAmbiente !== asaasCfgOriginal.ambiente ||
+        asaasVencimento !== asaasCfgOriginal.vencimento;
+    // Botão único "Salvar tudo": habilita se mudou a config OU se há uma nova chave digitada.
+    const asaasAlterado = asaasCfgAlterada || asaasKey.trim().length > 0;
+
     const chavesAlteradas = (Object.keys(webhooks) as ChaveWebhook[]).filter(
         (k) => webhooks[k].url !== webhooksOriginais[k].url || webhooks[k].ativo !== webhooksOriginais[k].ativo
     );
@@ -244,7 +270,7 @@ export default function Configuracoes() {
                     setHasExistingRcToken(true);
                 }
                 if (settings && settings.webhooks) {
-                    const whs = settings.webhooks as any;
+                    const whs = settings.webhooks as Record<string, { url?: string; ativo?: boolean }>;
                     const carregado = { ...WEBHOOKS_VAZIOS };
                     for (const { chave } of DEFINICOES) {
                         if (whs[chave]) {
@@ -256,6 +282,26 @@ export default function Configuracoes() {
                     }
                     setWebhooks({ ...carregado });
                     setWebhooksOriginais({ ...carregado });
+                }
+
+                if (settings && typeof settings.asaasApiKey === 'string' && settings.asaasApiKey.length > 10) {
+                    setHasExistingAsaasKey(true);
+                }
+                if (settings && settings.asaas && typeof settings.asaas === 'object') {
+                    const a = settings.asaas as { ativo?: boolean; apiUrl?: string; vencimentoDias?: number };
+                    const ambiente: 'sandbox' | 'producao' =
+                        typeof a.apiUrl === 'string' && !a.apiUrl.includes('sandbox') && a.apiUrl.length > 0
+                            ? 'producao'
+                            : 'sandbox';
+                    const cfg = {
+                        ativo: a.ativo !== false,
+                        ambiente,
+                        vencimento: typeof a.vencimentoDias === 'number' && a.vencimentoDias > 0 ? a.vencimentoDias : 3,
+                    };
+                    setAsaasAtivo(cfg.ativo);
+                    setAsaasAmbiente(cfg.ambiente);
+                    setAsaasVencimento(cfg.vencimento);
+                    setAsaasCfgOriginal(cfg);
                 }
             } catch (error) {
                 console.error('Error loading settings:', error);
@@ -316,6 +362,45 @@ export default function Configuracoes() {
             addToast('Erro ao salvar o token do Responde Chat.', 'error');
         }
         setIsSavingRcToken(false);
+    };
+
+    const handleSaveAsaas = async () => {
+        const venc = Math.max(1, Math.min(30, Math.round(asaasVencimento) || 3));
+        const trimmedKey = asaasKey.trim();
+        // A chave só é validada/gravada se o usuário digitou uma nova (campo fica vazio no uso normal).
+        if (trimmedKey && trimmedKey.length < 10) {
+            addToast('A chave parece inválida (muito curta).', 'error');
+            return;
+        }
+
+        setIsSavingAsaas(true);
+        try {
+            // Chave (se nova) + config numa ÚNICA gravação — nunca mais ficam
+            // dessincronizadas (foi o que causou o invalid_environment).
+            // Objeto aninhado completo: setDoc+merge não trata chave pontilhada como caminho.
+            const payload: Record<string, unknown> = {
+                asaas: {
+                    ativo: asaasAtivo,
+                    apiUrl: ASAAS_URLS[asaasAmbiente],
+                    vencimentoDias: venc,
+                },
+            };
+            if (trimmedKey) payload.asaasApiKey = trimmedKey;
+            await saveAppSettings(payload);
+
+            setAsaasVencimento(venc);
+            setAsaasCfgOriginal({ ativo: asaasAtivo, ambiente: asaasAmbiente, vencimento: venc });
+            if (trimmedKey) {
+                setHasExistingAsaasKey(true);
+                setAsaasKey('');
+                setShowAsaasKey(false);
+            }
+            addToast('Asaas salvo com sucesso!', 'success');
+        } catch (error) {
+            console.error('Error saving Asaas:', error);
+            addToast('Erro ao salvar o Asaas.', 'error');
+        }
+        setIsSavingAsaas(false);
     };
 
     const handleSaveWebhooks = async () => {
@@ -697,6 +782,174 @@ export default function Configuracoes() {
                         >
                             <Save size={16} />
                             <span>{isSavingRcToken ? 'Salvando...' : 'Salvar token'}</span>
+                        </button>
+                    </div>
+
+                    {/* Asaas — Boleto automático */}
+                    <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                background: 'var(--bg-card-elevated)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: 'var(--primary)',
+                            }}>
+                                <FileText size={20} />
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    Asaas (boleto automático)
+                                </h3>
+                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                    Gera o boleto sozinho quando o cliente fecha no boleto e envia o link + a linha digitável.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Status da chave */}
+                        {!isLoading && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 'var(--space-2)',
+                                padding: 'var(--space-3) var(--space-4)',
+                                borderRadius: 'var(--radius-md)',
+                                backgroundColor: hasExistingAsaasKey ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
+                                marginBottom: 'var(--spacing-md)',
+                            }}>
+                                {hasExistingAsaasKey ? (
+                                    <>
+                                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>Chave configurada</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>Nenhuma chave configurada</span>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Input da chave */}
+                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                                {hasExistingAsaasKey ? 'Substituir chave' : 'Colar chave da API do Asaas'}
+                            </label>
+                            <div style={{ position: 'relative' }}>
+                                <input
+                                    type={showAsaasKey ? 'text' : 'password'}
+                                    value={asaasKey}
+                                    onChange={(e) => setAsaasKey(e.target.value)}
+                                    placeholder={hasExistingAsaasKey ? 'Cole a nova chave para substituir...' : 'Cole a chave (sandbox para testar)...'}
+                                    disabled={isSavingAsaas}
+                                    style={{
+                                        width: '100%',
+                                        padding: '14px',
+                                        paddingRight: '48px',
+                                        background: 'var(--bg-input)',
+                                        border: '1px solid var(--border-subtle)',
+                                        borderRadius: 'var(--radius-md)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: 'var(--text-sm)',
+                                        fontFamily: 'var(--font-mono)',
+                                    }}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAsaasKey(!showAsaasKey)}
+                                    style={{
+                                        position: 'absolute',
+                                        right: '12px',
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: 'var(--text-tertiary)',
+                                        padding: '4px',
+                                    }}
+                                    title={showAsaasKey ? 'Ocultar' : 'Mostrar'}
+                                >
+                                    {showAsaasKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div style={{ borderTop: '1px solid var(--border-subtle)', margin: 'var(--spacing-md) 0' }} />
+
+                        {/* Ligar/desligar a geração */}
+                        <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--spacing-md)' }}>
+                            <input
+                                type="checkbox"
+                                checked={asaasAtivo}
+                                disabled={isSavingAsaas}
+                                onChange={(e) => setAsaasAtivo(e.target.checked)}
+                            />
+                            <span>Geração automática de boleto ativa</span>
+                        </label>
+
+                        {/* Ambiente */}
+                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Ambiente</label>
+                            <select
+                                value={asaasAmbiente}
+                                disabled={isSavingAsaas}
+                                onChange={(e) => setAsaasAmbiente(e.target.value as 'sandbox' | 'producao')}
+                                style={{
+                                    width: '100%',
+                                    padding: '12px',
+                                    background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-subtle)',
+                                    borderRadius: 'var(--radius-md)',
+                                    color: 'var(--text-primary)',
+                                    fontSize: 'var(--text-sm)',
+                                }}
+                            >
+                                <option value="sandbox">Sandbox (teste — boletos fictícios)</option>
+                                <option value="producao">Produção (boletos reais)</option>
+                            </select>
+                            {asaasAmbiente === 'producao' && (
+                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--warning)', marginTop: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+                                    <AlertTriangle size={12} /> Produção emite boletos reais. Confirme que a chave acima é a de produção.
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Vencimento */}
+                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Vencimento do boleto (dias)</label>
+                            <input
+                                type="number"
+                                min={1}
+                                max={30}
+                                value={asaasVencimento}
+                                disabled={isSavingAsaas}
+                                onChange={(e) => setAsaasVencimento(parseInt(e.target.value, 10) || 0)}
+                                style={{
+                                    width: '120px',
+                                    padding: '12px',
+                                    background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-subtle)',
+                                    borderRadius: 'var(--radius-md)',
+                                    color: 'var(--text-primary)',
+                                    fontSize: 'var(--text-sm)',
+                                }}
+                            />
+                        </div>
+
+                        <button
+                            onClick={handleSaveAsaas}
+                            className="btn btn-primary"
+                            disabled={isSavingAsaas || !asaasAlterado}
+                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                        >
+                            <Save size={16} />
+                            <span>{isSavingAsaas ? 'Salvando...' : asaasAlterado ? 'Salvar tudo' : 'Nada a salvar'}</span>
                         </button>
                     </div>
                 </>

@@ -337,6 +337,126 @@ async function marcarFalhaIA(convRef, motivo, contexto = {}, settingsData = null
 }
 
 // ----------------------------------------
+// Asaas — geração automática de boleto no [LEAD_PRONTO forma=boleto valor=...]
+// Chave, URL, vencimento e liga/desliga ficam em settings/app (asaasApiKey + asaas.*),
+// no mesmo padrão do geminiApiKey/respondechatToken — editável sem deploy.
+// ----------------------------------------
+const ASAAS_URL_PADRAO = "https://api-sandbox.asaas.com/v3"; // troque p/ https://api.asaas.com/v3 em settings/app.asaas.apiUrl quando for pra produção
+const ASAAS_VENCIMENTO_DIAS_PADRAO = 3;
+const ASAAS_VALOR_MIN = 10;
+const ASAAS_VALOR_MAX = 2000;
+
+// Pagador fictício rotativo: não coletamos CPF real do cliente (regra do prompt).
+const NOMES_BOLETO = [
+  "Ana Paula Souza", "Carlos Eduardo Oliveira", "Mariana Costa Lima",
+  "Roberto Alves Pereira", "Juliana Ferreira Santos", "Marcos Vinicius Rocha",
+  "Patricia Gomes Ribeiro", "Fernando Henrique Dias", "Camila Barbosa Nunes",
+  "Rafael Augusto Cardoso",
+];
+
+/** CPF com dígitos verificadores válidos (número fictício, sem pontuação). */
+function gerarCpfValido() {
+  const d = [];
+  for (let i = 0; i < 9; i++) d.push(Math.floor(Math.random() * 10));
+  for (let j = 0; j < 2; j++) {
+    let soma = 0;
+    for (let i = 0; i < 9 + j; i++) soma += d[i] * (10 + j - i);
+    let dig = (soma * 10) % 11;
+    if (dig === 10) dig = 0;
+    d.push(dig);
+  }
+  return d.join("");
+}
+
+function gerarNomeBoleto() {
+  return NOMES_BOLETO[Math.floor(Math.random() * NOMES_BOLETO.length)];
+}
+
+/** "149,90" | "149.90" | "1.149,90" → número (149.9 / 1149.9), ou null se não parsear. */
+function parseValorBRL(bruto) {
+  if (!bruto) return null;
+  let s = String(bruto).trim().replace(/[^\d.,]/g, "");
+  if (!s) return null;
+  if (s.includes(",")) {
+    // vírgula é o separador decimal → pontos viram milhar e somem
+    s = s.replace(/\./g, "").replace(",", ".");
+  }
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Hoje + N dias no formato YYYY-MM-DD, fuso America/Sao_Paulo (UTC-3). */
+function vencimentoISO(dias) {
+  const brt = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  brt.setUTCDate(brt.getUTCDate() + (dias || ASAAS_VENCIMENTO_DIAS_PADRAO));
+  return brt.toISOString().slice(0, 10);
+}
+
+/**
+ * Cria cliente + cobrança boleto no Asaas e devolve link e linha digitável.
+ * Lança erro em qualquer falha — o chamador decide o fallback (marcar falhaIA).
+ */
+async function gerarBoletoAsaas({ apiKey, apiUrl, valor, vencimentoDias, numero, agenteSlug, nome }) {
+  const base = (apiUrl || ASAAS_URL_PADRAO).replace(/\/+$/, "");
+  const headers = { "Content-Type": "application/json", "access_token": apiKey };
+
+  // 1. Cliente: nome REAL informado pelo cliente (boleto sai no nome dele); só cai
+  //    no nome fictício rotativo se a IA não tiver coletado. O CPF é sempre fictício.
+  const nomePagador = (nome && nome.trim()) ? nome.trim() : gerarNomeBoleto();
+  const cliRes = await fetch(`${base}/customers`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: nomePagador, cpfCnpj: gerarCpfValido() }),
+  });
+  const cliData = await cliRes.json().catch(() => ({}));
+  if (!cliRes.ok || !cliData.id) {
+    throw new Error(`Asaas /customers ${cliRes.status}: ${JSON.stringify(cliData).slice(0, 300)}`);
+  }
+
+  // 2. Cobrança boleto
+  const payRes = await fetch(`${base}/payments`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      customer: cliData.id,
+      billingType: "BOLETO",
+      value: Number(Number(valor).toFixed(2)),
+      dueDate: vencimentoISO(vencimentoDias),
+      externalReference: `${numero}_${agenteSlug}`,
+      description: "Perfume Atracao Arabe / Lattifah",
+    }),
+  });
+  const payData = await payRes.json().catch(() => ({}));
+  if (!payRes.ok || !payData.id) {
+    throw new Error(`Asaas /payments ${payRes.status}: ${JSON.stringify(payData).slice(0, 300)}`);
+  }
+
+  // 3. Linha digitável (GET sem body — corpo vazio evita 403). Best-effort:
+  //    se falhar, ainda mandamos o link do boleto, que sempre abre.
+  let linhaDigitavel = null;
+  try {
+    const idRes = await fetch(`${base}/payments/${payData.id}/identificationField`, {
+      method: "GET",
+      headers: { "access_token": apiKey },
+    });
+    if (idRes.ok) {
+      const idData = await idRes.json().catch(() => ({}));
+      linhaDigitavel = idData.identificationField || null;
+    }
+  } catch (e) {
+    logger.warn("Asaas — linha digitável indisponível, seguindo só com o link", {
+      numero, agenteSlug, error: String(e).slice(0, 200),
+    });
+  }
+
+  return {
+    paymentId: payData.id,
+    bankSlipUrl: payData.bankSlipUrl || payData.invoiceUrl || null,
+    linhaDigitavel,
+  };
+}
+
+// ----------------------------------------
 // ping — Cloud Function de teste
 // Retorna um JSON simples pra confirmar que o deploy funcionou.
 // ----------------------------------------
@@ -368,17 +488,26 @@ function buildAgentSystemPrompt(config, cases) {
       `\nCONDIÇÃO DE LEAD PRONTO (OBRIGATÓRIO):
 Quando a seguinte situação ocorrer — ${config.handoffRule.trim()} — você DEVE obrigatoriamente adicionar o marcador [LEAD_PRONTO] ao final absoluto da sua resposta.
 
-Regras rigorosas para a emissão do marcador:
-1. O marcador [LEAD_PRONTO] deve ser escrito exatamente dessa forma (letras maiúsculas e entre colchetes) em uma LINHA TOTALMENTE ISOLADA no final absoluto de toda a sua resposta.
-2. O marcador deve ficar sempre DEPOIS da última linha de conteúdo e DEPOIS de qualquer separador de mensagens "---" (caso esteja no formato split). O marcador NÃO é uma mensagem para o cliente e NÃO deve ser tratado como uma das partes do split. Não insira outro separador "---" após o marcador.
-3. Este marcador é de uso estritamente interno do sistema e invisível para o cliente. NUNCA mencione, explique ou faça referência ao marcador "[LEAD_PRONTO]" na conversa com o cliente.
-4. Você deve CONTINUAR conversando e atendendo o cliente normalmente, respondendo suas dúvidas e conduzindo o fechamento como se você fosse o vendedor. NÃO pare de responder e NÃO encerre o fluxo.
+O marcador carrega a forma de pagamento e, quando a forma for boleto, o valor total e o nome do cliente:
+[LEAD_PRONTO forma=<pix|boleto|cartao> valor=<valor total em reais> nome=<nome completo do cliente>]
+- "forma" é a forma que o cliente escolheu, sem acento: pix, boleto ou cartao.
+- "valor" é o valor TOTAL da compra conforme a tabela de preços, com ponto decimal (ex.: 149.90). OBRIGATÓRIO quando forma=boleto; nas demais formas pode ser omitido.
+- "nome" é o nome completo que o cliente informou, para emitir o boleto no nome dele. OBRIGATÓRIO quando forma=boleto e deve ser SEMPRE o ÚLTIMO atributo do marcador (pode conter espaços). Nas demais formas, omita.
+- Exemplo boleto: [LEAD_PRONTO forma=boleto valor=249.90 nome=João da Silva]
+- Exemplo pix: [LEAD_PRONTO forma=pix]
 
-Exemplo de formato de resposta quando a condition de lead pronto ocorre:
-Mensagem explicativa 1 ao cliente.
+Regras rigorosas para a emissão do marcador:
+1. O marcador deve ser escrito exatamente nesse formato (LEAD_PRONTO em maiúsculas, entre colchetes) em uma LINHA TOTALMENTE ISOLADA no final absoluto de toda a sua resposta.
+2. O marcador deve ficar sempre DEPOIS da última linha de conteúdo e DEPOIS de qualquer separador de mensagens "---" (caso esteja no formato split). O marcador NÃO é uma mensagem para o cliente e NÃO deve ser tratado como uma das partes do split. Não insira outro separador "---" após o marcador.
+3. Este marcador é de uso estritamente interno do sistema e invisível para o cliente. NUNCA mencione, explique ou faça referência ao marcador na conversa, e NUNCA escreva o valor ou a forma como se fossem texto para o cliente.
+4. Você deve CONTINUAR conversando e atendendo o cliente normalmente, respondendo suas dúvidas e conduzindo o fechamento como se você fosse o vendedor. NÃO pare de responder e NÃO encerre o fluxo.
+5. Quando forma=boleto, NÃO escreva você mesma nenhum link, código de barras ou linha digitável — o sistema anexa o boleto automaticamente logo após a sua mensagem de transição. Apenas conduza normalmente ("já te envio por aqui").
+
+Exemplo de formato de resposta quando a condição de lead pronto ocorre (boleto):
+Perfeito! Vou gerar o seu boleto aqui com o vencimento certinho.
 ---
-Mensagem explicativa 2 com a pergunta de avanço comercial.
-[LEAD_PRONTO]`
+Só um minutinho que já te envio por aqui mesmo.
+[LEAD_PRONTO forma=boleto valor=149.90]`
     );
   }
 
@@ -889,15 +1018,29 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
       // 10b. Detecção e remoção preliminar do marcador de lead pronto
       let leadPronto = false;
+      let formaPagamento = null;
+      let valorBoleto = null;
+      let nomeBoleto = null;
       let respostaLimpa = respostaCrua;
-      const regexDetect = /^[ \t]*\[LEAD_PRONTO\][ \t]*$/m;
-      if (regexDetect.test(respostaLimpa)) {
+      // Aceita [LEAD_PRONTO] ou [LEAD_PRONTO forma=boleto valor=149.90 nome=João Silva]
+      // (forma/valor em qualquer ordem; nome, se houver, é sempre o último — pode ter espaços).
+      const regexDetect = /^[ \t]*\[LEAD_PRONTO([^\]]*)\][ \t]*$/mi;
+      const matchLead = respostaLimpa.match(regexDetect);
+      if (matchLead) {
         leadPronto = true;
-        logger.info("lead pronto detectado", { numero, agenteSlug });
+        const attrs = matchLead[1] || "";
+        const fm = attrs.match(/forma\s*=\s*([a-zà-ú]+)/i);
+        const vm = attrs.match(/valor\s*=\s*([\d.,]+)/i);
+        const nm = attrs.match(/nome\s*=\s*(.+?)\s*$/i);
+        formaPagamento = fm ? fm[1].toLowerCase() : null;
+        valorBoleto = vm ? parseValorBRL(vm[1]) : null;
+        // remove sobra caso o modelo ponha forma/valor DEPOIS do nome; limita tamanho
+        nomeBoleto = nm ? nm[1].replace(/\s+(?:forma|valor)\s*=.*$/i, "").trim().slice(0, 80) : null;
+        logger.info("lead pronto detectado", { numero, agenteSlug, formaPagamento, valorBoleto, nomeBoleto });
 
-        // Remover a linha contendo [LEAD_PRONTO]
-        respostaLimpa = respostaLimpa.replace(/^[ \t]*\[LEAD_PRONTO\][ \t]*\r?\n?/gm, "");
-        respostaLimpa = respostaLimpa.replace(/\r?\n?[ \t]*\[LEAD_PRONTO\][ \t]*$/gm, "");
+        // Remover a(s) linha(s) do marcador (com ou sem atributos)
+        respostaLimpa = respostaLimpa.replace(/^[ \t]*\[LEAD_PRONTO[^\]]*\][ \t]*\r?\n?/gmi, "");
+        respostaLimpa = respostaLimpa.replace(/\r?\n?[ \t]*\[LEAD_PRONTO[^\]]*\][ \t]*$/gmi, "");
       }
 
       respostaLimpa = respostaLimpa.trim();
@@ -1025,8 +1168,80 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
       // Blindagem extra: pós-split
       mensagens = mensagens
-        .map((msg) => msg.replace(/\[LEAD_PRONTO\]/g, "").trim())
+        .map((msg) => msg.replace(/\[LEAD_PRONTO[^\]]*\]/gi, "").trim())
         .filter((msg) => msg.length > 0);
+
+      // 10c. Boleto automático via Asaas quando o cliente fechou no boleto.
+      // Um boleto por conversa (dedup), valor validado, tudo configurável em settings/app.
+      if (leadPronto && formaPagamento === "boleto") {
+        const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+        const asaasApiKey = settingsData.asaasApiKey;
+        const asaasCfg = settingsData.asaas || {};
+        const asaasAtivo = asaasCfg.ativo !== false;
+
+        const convBoletoSnap = await convRef.get();
+        const jaGerou = convBoletoSnap.exists && convBoletoSnap.data().boletoAsaasGerado === true;
+
+        if (!asaasApiKey || !asaasAtivo) {
+          logger.info("boleto Asaas pulado: sem chave ou desativado", {
+            numero, temChave: !!asaasApiKey, ativo: asaasAtivo,
+          });
+        } else if (jaGerou) {
+          logger.info("boleto Asaas pulado: já gerado nesta conversa (dedup)", { numero });
+        } else if (!valorBoleto || valorBoleto < ASAAS_VALOR_MIN || valorBoleto > ASAAS_VALOR_MAX) {
+          await marcarFalhaIA(convRef,
+            `boleto sem valor válido no marcador (valor=${valorBoleto})`,
+            { numero, agenteSlug }, settingsData);
+        } else {
+          try {
+            const boleto = await gerarBoletoAsaas({
+              apiKey: asaasApiKey,
+              apiUrl: asaasCfg.apiUrl,
+              valor: valorBoleto,
+              vencimentoDias: asaasCfg.vencimentoDias,
+              nome: nomeBoleto,
+              numero, agenteSlug,
+            });
+
+            // Monta as mensagens do boleto. A linha digitável vai SOZINHA numa
+            // mensagem só dela, para o cliente copiar/colar limpo (mesma lógica da chave PIX).
+            const msgsBoleto = [];
+            if (boleto.bankSlipUrl) {
+              msgsBoleto.push(
+                `Aqui está o seu boleto, é só acessar pelo link e pagar no app do seu banco ou imprimir:\n${boleto.bankSlipUrl}`
+              );
+            }
+            if (boleto.linhaDigitavel) {
+              msgsBoleto.push("E se preferir copiar e colar, essa é a linha digitável:");
+              msgsBoleto.push(boleto.linhaDigitavel);
+            }
+
+            // Envia ao cliente E grava no histórico: sem isso o boleto não aparece
+            // na bancada e a IA não sabe que já mandou (só o dedup impede reenvio).
+            const tsBoleto = Date.now();
+            msgsBoleto.forEach((m, i) => {
+              mensagens.push(m);
+              historicoAtualizado.push({ role: "model", text: m, ts: tsBoleto + i });
+            });
+
+            await convRef.set({
+              messages: historicoAtualizado,
+              boletoAsaasGerado: true,
+              boletoAsaasId: boleto.paymentId,
+              boletoAsaasValor: valorBoleto,
+              boletoAsaasTs: tsBoleto,
+            }, { merge: true });
+
+            logger.info("boleto Asaas gerado", {
+              numero, agenteSlug, paymentId: boleto.paymentId, valor: valorBoleto,
+            });
+          } catch (err) {
+            await marcarFalhaIA(convRef,
+              `falha ao gerar boleto Asaas: ${String(err).slice(0, 300)}`,
+              { numero, agenteSlug }, settingsData);
+          }
+        }
+      }
 
       logger.info("webhookRespondeChat — resposta gerada", {
         numero,
@@ -1098,9 +1313,13 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     let enviadas = 0;
 
     for (let i = 0; i < mensagens.length; i++) {
-      // Delay de 1.2s entre mensagens (não antes da primeira)
+      // Pausa entre mensagens (não antes da primeira). Mensagem com link (boleto/
+      // cartão) demora mais pra assentar no WhatsApp por causa da pré-visualização;
+      // sem uma pausa maior, a mensagem de texto seguinte a ultrapassa e a ordem
+      // embaralha (Padrão F). Damos mais tempo depois de uma mensagem com URL.
       if (i > 0) {
-        await new Promise((r) => setTimeout(r, 3000));
+        const anteriorTemLink = /https?:\/\//i.test(mensagens[i - 1]);
+        await new Promise((r) => setTimeout(r, anteriorTemLink ? 6000 : 3000));
       }
 
       try {
