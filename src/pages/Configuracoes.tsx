@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import { getAppSettings, saveAppSettings, saveCanais } from '../services/firebase';
 import { setGeminiKey } from '../services/aiService';
 import { useToast } from '../contexts/ToastContext';
-import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe, Pencil, X, Lock, FileText, Plus, Trash2, Smartphone } from 'lucide-react';
+import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Globe, Pencil, X, Lock, FileText, Plus, Trash2, Smartphone } from 'lucide-react';
 
 // ----------------------------------------
 // Asaas — geração automática de boleto
@@ -55,36 +55,28 @@ const DEFINICOES: { chave: ChaveWebhook; titulo: string; descricao: string; nota
 ];
 
 // ----------------------------------------
-// Chips (canais) — cada número de WhatsApp com token e webhooks próprios.
-// Sem isso, os eventos que mexem no lead (mover p/ atendendo, lead pronto,
-// remarketing) disparam sempre pela automação do canal padrão, na caixa errada.
+// Telefones (canais) — cada número de WhatsApp com token e webhooks próprios.
+// O "canal padrão" (mensagens sem &canal= na URL de entrada) usa o token e os
+// webhooks globais; os demais chips ficam em settings.canais. Sem isso, os
+// eventos que mexem no lead (mover p/ atendendo, lead pronto, remarketing,
+// falha) disparam sempre pela automação do padrão, na caixa errada.
 // ----------------------------------------
-
-/** Eventos que agem no lead e por isso precisam disparar no chip de origem. */
-type EventoCanal = 'iaAcionada' | 'leadPronto' | 'remarketing';
 
 interface Canal {
     _id: string;    // id só do cliente, p/ key estável no React — não é persistido
     slug: string;   // casa com ?canal=<slug> na URL de entrada do Responde Chat
     nome: string;   // rótulo amigável (ex.: "Claro 2")
     token: string;  // token do Responde Chat desta conexão
-    webhooks: Record<EventoCanal, ConfigWebhook>;
+    webhooks: Record<ChaveWebhook, ConfigWebhook>;
 }
 
 let seqCanal = 0;
 const novoIdCanal = () => `canal-${Date.now()}-${seqCanal++}`;
 
-const EVENTOS_CANAL: { chave: EventoCanal; titulo: string; descricao: string }[] = [
-    { chave: 'iaAcionada', titulo: 'IA Acionada', descricao: 'Move o lead para "atendendo" quando a IA assume a conversa neste chip.' },
-    { chave: 'leadPronto', titulo: 'Lead Pronto', descricao: 'Dispara quando o cliente escolhe a forma de pagamento neste chip.' },
-    { chave: 'remarketing', titulo: 'Remarketing', descricao: 'Reengaja conversas paradas (~22h) que vieram por este chip.' },
-];
-
-const webhooksCanalVazios = (): Record<EventoCanal, ConfigWebhook> => ({
-    iaAcionada: { url: '', ativo: true },
-    leadPronto: { url: '', ativo: true },
-    remarketing: { url: '', ativo: true },
-});
+const webhooksVazios = (): Record<ChaveWebhook, ConfigWebhook> =>
+    Object.fromEntries(
+        Object.entries(WEBHOOKS_VAZIOS).map(([k, v]) => [k, { ...v }]),
+    ) as Record<ChaveWebhook, ConfigWebhook>;
 
 /** Esconde o miolo da URL: protocolo, host e os últimos caracteres bastam para reconhecê-la. */
 function mascarar(url: string): string {
@@ -162,67 +154,75 @@ function CampoWebhook({ titulo, descricao, notaVazio, cfg, original, salvando, o
 
             <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', margin: 'var(--space-2) 0' }}>
                 {descricao}
+                {!configurado && notaVazio && (
+                    <span style={{ display: 'block', color: 'var(--text-tertiary)', marginTop: '2px' }}>{notaVazio}</span>
+                )}
             </p>
 
             {editando ? (
                 <>
                     <input
                         type="text"
-                        autoFocus
                         value={cfg.url}
                         onChange={(e) => onChange({ ...cfg, url: e.target.value })}
-                        placeholder="https://backend.respondechat.ai/webhook/..."
+                        placeholder="https://..."
                         disabled={salvando}
                         style={{
                             width: '100%',
-                            padding: '12px',
+                            padding: '10px 12px',
                             background: 'var(--bg-input)',
-                            border: `1px solid ${urlInvalida ? 'var(--error, #ef4444)' : 'var(--border-subtle)'}`,
+                            border: `1px solid ${urlInvalida ? 'var(--danger, #dc2626)' : 'var(--border-subtle)'}`,
                             borderRadius: 'var(--radius-md)',
                             color: 'var(--text-primary)',
                             fontSize: 'var(--text-sm)',
                             fontFamily: 'var(--font-mono)',
                         }}
                     />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
-                        <button type="button" className="btn btn-ghost btn-sm" onClick={cancelar} disabled={salvando}>
+                    {urlInvalida && (
+                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--danger, #dc2626)', marginTop: 'var(--space-1)' }}>
+                            A URL precisa começar com http:// ou https://
+                        </p>
+                    )}
+                    <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+                        <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={cancelar}
+                            disabled={salvando}
+                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)' }}
+                        >
                             <X size={14} /> Cancelar
                         </button>
                         <button
                             type="button"
-                            className="btn btn-secondary btn-sm"
+                            className="btn btn-primary btn-sm"
                             onClick={() => { setEditando(false); setRevelado(false); }}
                             disabled={salvando || urlInvalida}
+                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)' }}
                         >
                             <Lock size={14} /> Pronto
                         </button>
-                        {urlInvalida && (
-                            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--error, #ef4444)' }}>
-                                A URL precisa começar com https://
-                            </span>
-                        )}
                     </div>
                 </>
             ) : (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    <code style={{
-                        flex: 1,
-                        minWidth: 0,
-                        padding: '10px 12px',
-                        background: 'var(--bg-input)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-md)',
-                        color: configurado ? 'var(--text-secondary)' : 'var(--text-tertiary)',
-                        fontSize: 'var(--text-xs)',
-                        fontFamily: 'var(--font-mono)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                    }}>
-                        {configurado
-                            ? (revelado ? cfg.url : mascarar(cfg.url))
-                            : (notaVazio || 'Nenhuma URL configurada — este evento não é enviado.')}
-                    </code>
+                    <input
+                        type="text"
+                        readOnly
+                        value={configurado ? (revelado ? cfg.url : mascarar(cfg.url)) : ''}
+                        placeholder="Nenhuma URL configurada — este evento não é enviado."
+                        style={{
+                            flex: 1,
+                            minWidth: 0,
+                            padding: '10px 12px',
+                            background: 'var(--bg-input)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 'var(--radius-md)',
+                            color: 'var(--text-secondary)',
+                            fontSize: 'var(--text-sm)',
+                            fontFamily: 'var(--font-mono)',
+                        }}
+                    />
                     {configurado && (
                         <button
                             type="button"
@@ -257,16 +257,16 @@ interface PropsCartaoCanal {
 }
 
 /**
- * Um chip (canal): nome, slug, token e os webhooks que agem no lead. O slug é o
- * que amarra tudo — precisa bater com o ?canal=<slug> na URL de entrada, senão o
- * backend não reconhece o chip e cai no canal padrão.
+ * Painel de um chip (telefone não-padrão): nome, slug, token e os webhooks que
+ * agem no lead. O slug é o que amarra tudo — precisa bater com o ?canal=<slug>
+ * na URL de entrada, senão o backend não reconhece o chip e cai no canal padrão.
  */
 function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCartaoCanal) {
     const [showToken, setShowToken] = useState(false);
     const tokenConfigurado = canal.token.trim().length > 0;
 
     return (
-        <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+        <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-md)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-md)' }}>
                 <div style={{
                     width: '40px', height: '40px', borderRadius: '50%',
@@ -277,10 +277,10 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                     <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                        {canal.nome.trim() || 'Novo chip'}
+                        {canal.nome.trim() || 'Novo telefone'}
                     </h3>
                     <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                        Número com token e webhooks próprios.
+                        Token e webhooks próprios deste número.
                     </p>
                 </div>
                 <button
@@ -288,7 +288,7 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
                     className="btn btn-ghost btn-icon"
                     onClick={onRemover}
                     disabled={salvando}
-                    title="Remover chip"
+                    title="Remover telefone"
                     style={{ color: '#dc2626', flexShrink: 0 }}
                 >
                     <Trash2 size={16} />
@@ -326,7 +326,7 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
                 </div>
             </div>
             <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginBottom: 'var(--spacing-md)' }}>
-                A URL de entrada deste chip no Responde Chat precisa terminar com{' '}
+                A URL de entrada deste telefone no Responde Chat precisa terminar com{' '}
                 <code>&amp;canal={canal.slug.trim() || 'slug'}</code>. Sem isso, a mensagem cai no canal padrão.
             </p>
 
@@ -365,17 +365,17 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
             </div>
 
             <span className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)', color: 'var(--text-secondary)' }}>
-                Webhooks deste chip
+                Webhooks deste telefone
             </span>
-            {EVENTOS_CANAL.map((ev) => (
+            {DEFINICOES.map(({ chave, titulo, descricao }) => (
                 <CampoWebhook
-                    key={ev.chave}
-                    titulo={ev.titulo}
-                    descricao={ev.descricao}
-                    cfg={canal.webhooks[ev.chave]}
-                    original={original.webhooks[ev.chave]}
+                    key={chave}
+                    titulo={titulo}
+                    descricao={descricao}
+                    cfg={canal.webhooks[chave]}
+                    original={original.webhooks[chave]}
                     salvando={salvando}
-                    onChange={(cfg) => onChange({ ...canal, webhooks: { ...canal.webhooks, [ev.chave]: cfg } })}
+                    onChange={(cfg) => onChange({ ...canal, webhooks: { ...canal.webhooks, [chave]: cfg } })}
                 />
             ))}
         </div>
@@ -384,32 +384,29 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
 
 export default function Configuracoes() {
     const { addToast } = useToast();
-    const [activeTab, setActiveTab] = useState<'webhooks' | 'ia' | 'canais'>('webhooks');
+    const [activeTab, setActiveTab] = useState<'webhooks' | 'ia' | 'asaas'>('webhooks');
     const [apiKey, setApiKey] = useState('');
     const [hasExistingKey, setHasExistingKey] = useState(false);
     const [showKey, setShowKey] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
+    // Seletor de telefone da aba Webhooks: 'padrao' (Claro 4) ou o _id de um chip.
+    const [telefoneSelId, setTelefoneSelId] = useState<string>('padrao');
 
+    // Canal padrão (Claro 4): token e webhooks globais.
+    const [rcTokenValue, setRcTokenValue] = useState('');
+    const [rcTokenOriginal, setRcTokenOriginal] = useState('');
+    const [showRcTokenVal, setShowRcTokenVal] = useState(false);
 
-    const [rcToken, setRcToken] = useState('');
-    const [hasExistingRcToken, setHasExistingRcToken] = useState(false);
-    const [showRcToken, setShowRcToken] = useState(false);
-    const [isSavingRcToken, setIsSavingRcToken] = useState(false);
+    const [webhooks, setWebhooks] = useState<Record<ChaveWebhook, ConfigWebhook>>(webhooksVazios());
+    const [webhooksOriginais, setWebhooksOriginais] = useState<Record<ChaveWebhook, ConfigWebhook>>(webhooksVazios());
+    const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
 
-    // Chips (canais): cada conexão do Responde Chat tem token e webhooks próprios.
-    // A resposta e os eventos que mexem no lead saem pelo mesmo canal que recebeu
-    // (URL do webhook ...&canal=<slug>), senão tudo cai no canal padrão.
+    // Chips (telefones não-padrão): cada um com token e webhooks próprios.
     const [canais, setCanais] = useState<Canal[]>([]);
     const [canaisOriginais, setCanaisOriginais] = useState<Canal[]>([]);
     const [isSavingCanais, setIsSavingCanais] = useState(false);
-
-    const canaisAlterados = JSON.stringify(canais) !== JSON.stringify(canaisOriginais);
-
-    const [webhooks, setWebhooks] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
-    const [webhooksOriginais, setWebhooksOriginais] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
-    const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
 
     // Asaas: chave (secreta, write-only) + config não-secreta (ativo/ambiente/vencimento)
     const [asaasKey, setAsaasKey] = useState('');
@@ -429,9 +426,17 @@ export default function Configuracoes() {
     // Botão único "Salvar tudo": habilita se mudou a config OU se há uma nova chave digitada.
     const asaasAlterado = asaasCfgAlterada || asaasKey.trim().length > 0;
 
+    // Canal padrão: mudou algum webhook OU o token?
     const chavesAlteradas = (Object.keys(webhooks) as ChaveWebhook[]).filter(
         (k) => webhooks[k].url !== webhooksOriginais[k].url || webhooks[k].ativo !== webhooksOriginais[k].ativo
     );
+    const rcTokenAlterado = rcTokenValue.trim() !== rcTokenOriginal.trim();
+    const padraoAlterado = chavesAlteradas.length > 0 || rcTokenAlterado;
+
+    const canaisAlterados = JSON.stringify(canais) !== JSON.stringify(canaisOriginais);
+
+    const telefoneSel = canais.find((c) => c._id === telefoneSelId) || null;
+    const telefoneSelIndex = canais.findIndex((c) => c._id === telefoneSelId);
 
     useEffect(() => {
         const loadSettings = async () => {
@@ -441,22 +446,39 @@ export default function Configuracoes() {
                     setHasExistingKey(true);
                 }
 
-                if (settings && typeof settings.respondechatToken === 'string' && settings.respondechatToken.length > 5) {
-                    setHasExistingRcToken(true);
+                if (settings && typeof settings.respondechatToken === 'string') {
+                    setRcTokenValue(settings.respondechatToken);
+                    setRcTokenOriginal(settings.respondechatToken);
                 }
+
+                if (settings && settings.webhooks) {
+                    const whs = settings.webhooks as Record<string, { url?: string; ativo?: boolean }>;
+                    const carregado = webhooksVazios();
+                    for (const { chave } of DEFINICOES) {
+                        if (whs[chave]) {
+                            carregado[chave] = {
+                                url: whs[chave].url || '',
+                                ativo: whs[chave].ativo !== false,
+                            };
+                        }
+                    }
+                    setWebhooks(carregado);
+                    setWebhooksOriginais({ ...carregado });
+                }
+
                 // Monta a lista de chips a partir de settings.canais e migra tokens
                 // legados (respondechatTokens.<slug>) que ainda não tenham um chip.
                 const listaCanais: Canal[] = [];
                 const rawCanais = (settings && settings.canais && typeof settings.canais === 'object')
                     ? settings.canais as Record<string, {
                         nome?: string; token?: string;
-                        webhooks?: Partial<Record<EventoCanal, { url?: string; ativo?: boolean }>>;
+                        webhooks?: Partial<Record<ChaveWebhook, { url?: string; ativo?: boolean }>>;
                     }>
                     : {};
                 for (const slug of Object.keys(rawCanais)) {
                     const c = rawCanais[slug] || {};
-                    const whs = webhooksCanalVazios();
-                    for (const { chave } of EVENTOS_CANAL) {
+                    const whs = webhooksVazios();
+                    for (const { chave } of DEFINICOES) {
                         const w = c.webhooks?.[chave];
                         if (w) whs[chave] = { url: w.url || '', ativo: w.ativo !== false };
                     }
@@ -479,27 +501,13 @@ export default function Configuracoes() {
                                 slug,
                                 nome: slug === 'claro2' ? 'Claro 2' : slug,
                                 token: tok,
-                                webhooks: webhooksCanalVazios(),
+                                webhooks: webhooksVazios(),
                             });
                         }
                     }
                 }
                 setCanais(listaCanais);
                 setCanaisOriginais(JSON.parse(JSON.stringify(listaCanais)));
-                if (settings && settings.webhooks) {
-                    const whs = settings.webhooks as Record<string, { url?: string; ativo?: boolean }>;
-                    const carregado = { ...WEBHOOKS_VAZIOS };
-                    for (const { chave } of DEFINICOES) {
-                        if (whs[chave]) {
-                            carregado[chave] = {
-                                url: whs[chave].url || '',
-                                ativo: whs[chave].ativo !== false,
-                            };
-                        }
-                    }
-                    setWebhooks({ ...carregado });
-                    setWebhooksOriginais({ ...carregado });
-                }
 
                 if (settings && typeof settings.asaasApiKey === 'string' && settings.asaasApiKey.length > 10) {
                     setHasExistingAsaasKey(true);
@@ -554,33 +562,6 @@ export default function Configuracoes() {
         setIsSaving(false);
     };
 
-
-
-    const handleSaveRcToken = async () => {
-        const trimmed = rcToken.trim();
-        if (!trimmed) {
-            addToast('Cole o token do Responde Chat antes de salvar.', 'error');
-            return;
-        }
-        if (trimmed.length < 5) {
-            addToast('O token parece inválido (muito curto).', 'error');
-            return;
-        }
-
-        setIsSavingRcToken(true);
-        try {
-            await saveAppSettings({ respondechatToken: trimmed });
-            setHasExistingRcToken(true);
-            setRcToken('');
-            setShowRcToken(false);
-            addToast('Token do Responde Chat salvo com sucesso!', 'success');
-        } catch (error) {
-            console.error('Error saving RespondeChat token:', error);
-            addToast('Erro ao salvar o token do Responde Chat.', 'error');
-        }
-        setIsSavingRcToken(false);
-    };
-
     const handleSaveAsaas = async () => {
         const venc = Math.max(1, Math.min(30, Math.round(asaasVencimento) || 3));
         const trimmedKey = asaasKey.trim();
@@ -620,8 +601,62 @@ export default function Configuracoes() {
         setIsSavingAsaas(false);
     };
 
-    const adicionarChip = () => {
-        setCanais((cs) => [...cs, { _id: novoIdCanal(), slug: '', nome: '', token: '', webhooks: webhooksCanalVazios() }]);
+    // ---- Canal padrão (Claro 4): token + webhooks globais ----
+    const handleSalvarPadrao = async () => {
+        if (!padraoAlterado) return;
+
+        const invalida = (Object.keys(webhooks) as ChaveWebhook[]).find((k) => {
+            const url = webhooks[k].url.trim();
+            return url.length > 0 && !/^https?:\/\//i.test(url);
+        });
+        if (invalida) {
+            addToast(`A URL de "${DEFINICOES.find((d) => d.chave === invalida)!.titulo}" precisa começar com https://`, 'error');
+            return;
+        }
+
+        // Apagar a URL de um webhook ativo o desliga na prática, sem aviso nenhum.
+        const apagada = chavesAlteradas.find(
+            (k) => webhooks[k].ativo && !webhooks[k].url.trim() && webhooksOriginais[k].url.trim()
+        );
+        if (apagada) {
+            const titulo = DEFINICOES.find((d) => d.chave === apagada)!.titulo;
+            if (!window.confirm(`Você apagou a URL de "${titulo}", que está marcado como Ativo. Sem URL, esse evento deixa de ser enviado. Salvar mesmo assim?`)) {
+                return;
+            }
+        }
+
+        setIsSavingWebhooks(true);
+        try {
+            // Objeto webhooks ANINHADO inteiro — setDoc+merge não trata chave
+            // pontilhada como caminho; o estado tem todas as chaves, nada se perde.
+            const webhooksSalvar: Record<ChaveWebhook, ConfigWebhook> = webhooksVazios();
+            for (const chave of Object.keys(webhooks) as ChaveWebhook[]) {
+                webhooksSalvar[chave] = { url: webhooks[chave].url.trim(), ativo: webhooks[chave].ativo };
+            }
+            const payload: Record<string, unknown> = { webhooks: webhooksSalvar };
+            if (rcTokenAlterado) payload.respondechatToken = rcTokenValue.trim();
+            await saveAppSettings(payload);
+
+            const salvos = { ...webhooks };
+            for (const chave of Object.keys(salvos) as ChaveWebhook[]) salvos[chave] = { ...salvos[chave], url: salvos[chave].url.trim() };
+            setWebhooks(salvos);
+            setWebhooksOriginais(salvos);
+            setRcTokenValue(rcTokenValue.trim());
+            setRcTokenOriginal(rcTokenValue.trim());
+
+            addToast('Canal padrão (Claro 4) salvo com sucesso!', 'success');
+        } catch (error) {
+            console.error('Error saving canal padrao:', error);
+            addToast('Erro ao salvar o canal padrão.', 'error');
+        }
+        setIsSavingWebhooks(false);
+    };
+
+    // ---- Chips (telefones não-padrão) ----
+    const adicionarTelefone = () => {
+        const novo: Canal = { _id: novoIdCanal(), slug: '', nome: '', token: '', webhooks: webhooksVazios() };
+        setCanais((cs) => [...cs, novo]);
+        setTelefoneSelId(novo._id);
     };
 
     const atualizarChip = (index: number, canal: Canal) => {
@@ -630,25 +665,20 @@ export default function Configuracoes() {
 
     const removerChip = (index: number) => {
         const c = canais[index];
-        const rotulo = c.nome.trim() || c.slug.trim() || 'este chip';
+        const rotulo = c.nome.trim() || c.slug.trim() || 'este telefone';
         if (!window.confirm(`Remover ${rotulo}? O token e os webhooks dele serão apagados ao salvar.`)) return;
+        if (c._id === telefoneSelId) setTelefoneSelId('padrao');
         setCanais((cs) => cs.filter((_, i) => i !== index));
     };
 
     /** Normaliza um chip do estado (trim) para o formato que vai ao Firestore. */
     const chipNormalizado = (c: Canal) => {
         const slug = c.slug.trim();
-        return {
-            _id: c._id,
-            slug,
-            nome: c.nome.trim() || slug,
-            token: c.token.trim(),
-            webhooks: {
-                iaAcionada: { url: c.webhooks.iaAcionada.url.trim(), ativo: c.webhooks.iaAcionada.ativo },
-                leadPronto: { url: c.webhooks.leadPronto.url.trim(), ativo: c.webhooks.leadPronto.ativo },
-                remarketing: { url: c.webhooks.remarketing.url.trim(), ativo: c.webhooks.remarketing.ativo },
-            },
-        };
+        const webhooks: Record<ChaveWebhook, ConfigWebhook> = webhooksVazios();
+        for (const { chave } of DEFINICOES) {
+            webhooks[chave] = { url: c.webhooks[chave].url.trim(), ativo: c.webhooks[chave].ativo };
+        }
+        return { _id: c._id, slug, nome: c.nome.trim() || slug, token: c.token.trim(), webhooks };
     };
 
     const handleSaveCanais = async () => {
@@ -656,7 +686,7 @@ export default function Configuracoes() {
         for (const c of canais) {
             const slug = c.slug.trim();
             if (!slug) {
-                addToast('Todo chip precisa de um identificador (slug), ex.: claro5.', 'error');
+                addToast('Todo telefone precisa de um identificador (slug), ex.: claro5.', 'error');
                 return;
             }
             if (!/^[a-z0-9_-]+$/i.test(slug)) {
@@ -666,15 +696,15 @@ export default function Configuracoes() {
         }
         const slugs = canais.map((c) => c.slug.trim().toLowerCase());
         if (new Set(slugs).size !== slugs.length) {
-            addToast('Há dois chips com o mesmo identificador (slug). Cada um precisa ser único.', 'error');
+            addToast('Há dois telefones com o mesmo identificador (slug). Cada um precisa ser único.', 'error');
             return;
         }
         // URLs de webhook precisam começar com http(s).
         for (const c of canais) {
-            for (const ev of EVENTOS_CANAL) {
-                const url = c.webhooks[ev.chave].url.trim();
+            for (const { chave, titulo } of DEFINICOES) {
+                const url = c.webhooks[chave].url.trim();
                 if (url && !/^https?:\/\//i.test(url)) {
-                    addToast(`A URL de "${ev.titulo}" do ${c.nome.trim() || c.slug} precisa começar com https://`, 'error');
+                    addToast(`A URL de "${titulo}" do ${c.nome.trim() || c.slug} precisa começar com https://`, 'error');
                     return;
                 }
             }
@@ -697,65 +727,28 @@ export default function Configuracoes() {
             const salvos: Canal[] = canais.map(chipNormalizado);
             setCanais(salvos);
             setCanaisOriginais(JSON.parse(JSON.stringify(salvos)));
-            addToast('Chips salvos com sucesso!', 'success');
+            addToast('Telefones salvos com sucesso!', 'success');
         } catch (error) {
             console.error('Error saving canais:', error);
-            addToast('Erro ao salvar os chips.', 'error');
+            addToast('Erro ao salvar os telefones.', 'error');
         }
         setIsSavingCanais(false);
     };
 
-    const handleSaveWebhooks = async () => {
-        if (chavesAlteradas.length === 0) return;
-
-        const invalida = chavesAlteradas.find((k) => {
-            const url = webhooks[k].url.trim();
-            return url.length > 0 && !/^https?:\/\//i.test(url);
-        });
-        if (invalida) {
-            addToast(`A URL de "${DEFINICOES.find((d) => d.chave === invalida)!.titulo}" precisa começar com https://`, 'error');
-            return;
-        }
-
-        // Apagar a URL de um webhook ativo o desliga na prática, sem aviso nenhum.
-        const apagada = chavesAlteradas.find(
-            (k) => webhooks[k].ativo && !webhooks[k].url.trim() && webhooksOriginais[k].url.trim()
-        );
-        if (apagada) {
-            const titulo = DEFINICOES.find((d) => d.chave === apagada)!.titulo;
-            if (!window.confirm(`Você apagou a URL de "${titulo}", que está marcado como Ativo. Sem URL, esse evento deixa de ser enviado. Salvar mesmo assim?`)) {
-                return;
-            }
-        }
-
-        setIsSavingWebhooks(true);
-        try {
-            // setDoc+merge NÃO trata chave pontilhada ("webhooks.x") como caminho:
-            // criava um campo literal e a edição não pegava na releitura. Gravamos o
-            // objeto webhooks ANINHADO inteiro — o estado tem todas as chaves, então
-            // nada se perde, e o merge preserva os demais campos de settings.
-            const webhooksSalvar: Record<ChaveWebhook, ConfigWebhook> = { ...WEBHOOKS_VAZIOS };
-            for (const chave of Object.keys(webhooks) as ChaveWebhook[]) {
-                webhooksSalvar[chave] = {
-                    url: webhooks[chave].url.trim(),
-                    ativo: webhooks[chave].ativo,
-                };
-            }
-            await saveAppSettings({ webhooks: webhooksSalvar });
-
-            const salvos = { ...webhooks };
-            for (const chave of chavesAlteradas) salvos[chave] = { ...salvos[chave], url: salvos[chave].url.trim() };
-            setWebhooks(salvos);
-            setWebhooksOriginais(salvos);
-
-            const nomes = chavesAlteradas.map((k) => DEFINICOES.find((d) => d.chave === k)!.titulo).join(', ');
-            addToast(`Salvo: ${nomes}`, 'success');
-        } catch (error) {
-            console.error('Error saving webhooks:', error);
-            addToast('Erro ao salvar as configurações de Webhooks.', 'error');
-        }
-        setIsSavingWebhooks(false);
-    };
+    // Estilo dos botões do seletor de telefone.
+    const pillStyle = (ativo: boolean): CSSProperties => ({
+        padding: '8px 14px',
+        borderRadius: 'var(--radius-md)',
+        border: `1px solid ${ativo ? 'var(--primary)' : 'var(--border-subtle)'}`,
+        background: ativo ? 'var(--primary)' : 'var(--bg-card-elevated)',
+        color: ativo ? '#fff' : 'var(--text-secondary)',
+        fontSize: 'var(--text-sm)',
+        fontWeight: ativo ? 600 : 400,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--space-2)',
+    });
 
     return (
         <div className="page-container" style={{ padding: 'var(--spacing-lg)' }}>
@@ -787,76 +780,142 @@ export default function Configuracoes() {
                 </button>
                 <button
                     type="button"
-                    className={`tab ${activeTab === 'canais' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('canais')}
+                    className={`tab ${activeTab === 'asaas' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('asaas')}
                 >
-                    Canais
+                    Asaas
                 </button>
             </div>
 
-            {/* Aba Webhooks */}
+            {/* Aba Webhooks — por telefone */}
             {activeTab === 'webhooks' && (
-                /* Webhooks Section */
-                <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
-                        <div style={{
-                            width: '40px',
-                            height: '40px',
-                            borderRadius: '50%',
-                            background: 'var(--bg-card-elevated)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'var(--primary)',
-                        }}>
-                            <Globe size={20} />
-                        </div>
-                        <div>
-                            <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                Configurações de Webhooks
-                            </h3>
-                            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                                Configure os endpoints de webhook para envio de eventos externos.
-                            </p>
-                        </div>
-                    </div>
+                <div style={{ marginTop: 'var(--spacing-lg)' }}>
+                    <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', maxWidth: '600px', marginBottom: 'var(--spacing-md)' }}>
+                        Escolha o telefone e configure o token e os webhooks dele. Cada número dispara os eventos pela sua própria automação — o lead é movido na caixa certa.
+                    </p>
 
-                    {DEFINICOES.map(({ chave, titulo, descricao, notaVazio }) => (
-                        <CampoWebhook
-                            key={chave}
-                            titulo={titulo}
-                            descricao={descricao}
-                            notaVazio={notaVazio}
-                            cfg={webhooks[chave]}
-                            original={webhooksOriginais[chave]}
-                            salvando={isSavingWebhooks}
-                            onChange={(cfg) => setWebhooks((prev) => ({ ...prev, [chave]: cfg }))}
-                        />
-                    ))}
-
-                    {/* Salvar — grava só o que foi alterado */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                        <button
-                            onClick={handleSaveWebhooks}
-                            className="btn btn-primary"
-                            disabled={isSavingWebhooks || chavesAlteradas.length === 0}
-                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                        >
-                            <Save size={16} />
-                            <span>
-                                {isSavingWebhooks
-                                    ? 'Salvando...'
-                                    : chavesAlteradas.length === 0
-                                        ? 'Nada a salvar'
-                                        : `Salvar ${chavesAlteradas.length} alteraç${chavesAlteradas.length === 1 ? 'ão' : 'ões'}`}
-                            </span>
+                    {/* Seletor de telefone */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', maxWidth: '600px', marginBottom: 'var(--spacing-md)' }}>
+                        <button type="button" style={pillStyle(telefoneSelId === 'padrao')} onClick={() => setTelefoneSelId('padrao')}>
+                            <Globe size={14} /> Claro 4 (padrão)
                         </button>
-                        {chavesAlteradas.length > 0 && !isSavingWebhooks && (
-                            <span className="text-muted" style={{ fontSize: 'var(--text-xs)' }}>
-                                {chavesAlteradas.map((k) => DEFINICOES.find((d) => d.chave === k)!.titulo).join(', ')}
-                            </span>
-                        )}
+                        {canais.map((c) => (
+                            <button key={c._id} type="button" style={pillStyle(telefoneSelId === c._id)} onClick={() => setTelefoneSelId(c._id)}>
+                                <Smartphone size={14} /> {c.nome.trim() || 'Novo telefone'}
+                            </button>
+                        ))}
+                        <button type="button" className="btn btn-ghost" onClick={adicionarTelefone} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                            <Plus size={16} /> Adicionar telefone
+                        </button>
                     </div>
+
+                    {/* Painel do canal padrão (Claro 4) */}
+                    {telefoneSelId === 'padrao' && (
+                        <div className="card" style={{ maxWidth: '600px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
+                                <div style={{
+                                    width: '40px', height: '40px', borderRadius: '50%',
+                                    background: 'var(--bg-card-elevated)', display: 'flex',
+                                    alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', flexShrink: 0,
+                                }}>
+                                    <Globe size={20} />
+                                </div>
+                                <div>
+                                    <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                        Claro 4 — canal padrão
+                                    </h3>
+                                    <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                        Usado quando a mensagem chega sem <code>&amp;canal=</code> na URL de entrada.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Token do canal padrão */}
+                            <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                                <label className="label-section" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+                                    Token do Responde Chat
+                                    {rcTokenValue.trim().length > 0
+                                        ? <span className="badge badge-success" style={{ fontSize: '10px', padding: '1px 6px' }}>configurado</span>
+                                        : <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>sem token</span>}
+                                </label>
+                                <div style={{ position: 'relative' }}>
+                                    <input
+                                        type={showRcTokenVal ? 'text' : 'password'}
+                                        value={rcTokenValue}
+                                        onChange={(e) => setRcTokenValue(e.target.value)}
+                                        placeholder="Cole o token do Responde Chat..."
+                                        disabled={isSavingWebhooks}
+                                        style={{
+                                            width: '100%', padding: '14px', paddingRight: '48px', background: 'var(--bg-input)',
+                                            border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
+                                        }}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowRcTokenVal((s) => !s)}
+                                        style={{
+                                            position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
+                                            background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '4px',
+                                        }}
+                                        title={showRcTokenVal ? 'Ocultar' : 'Mostrar'}
+                                    >
+                                        {showRcTokenVal ? <EyeOff size={16} /> : <Eye size={16} />}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <span className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)', color: 'var(--text-secondary)' }}>
+                                Webhooks deste telefone
+                            </span>
+                            {DEFINICOES.map(({ chave, titulo, descricao, notaVazio }) => (
+                                <CampoWebhook
+                                    key={chave}
+                                    titulo={titulo}
+                                    descricao={descricao}
+                                    notaVazio={notaVazio}
+                                    cfg={webhooks[chave]}
+                                    original={webhooksOriginais[chave]}
+                                    salvando={isSavingWebhooks}
+                                    onChange={(cfg) => setWebhooks((prev) => ({ ...prev, [chave]: cfg }))}
+                                />
+                            ))}
+
+                            <button
+                                onClick={handleSalvarPadrao}
+                                className="btn btn-primary"
+                                disabled={isSavingWebhooks || !padraoAlterado}
+                                style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                            >
+                                <Save size={16} />
+                                <span>{isSavingWebhooks ? 'Salvando...' : padraoAlterado ? 'Salvar canal padrão' : 'Nada a salvar'}</span>
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Painel de um chip selecionado */}
+                    {telefoneSelId !== 'padrao' && telefoneSel && (
+                        <>
+                            <CartaoCanal
+                                canal={telefoneSel}
+                                original={canaisOriginais.find((o) => o._id === telefoneSel._id) || telefoneSel}
+                                salvando={isSavingCanais}
+                                onChange={(atualizado) => atualizarChip(telefoneSelIndex, atualizado)}
+                                onRemover={() => removerChip(telefoneSelIndex)}
+                            />
+                            <div style={{ maxWidth: '600px', marginTop: 'var(--spacing-md)' }}>
+                                <button
+                                    onClick={handleSaveCanais}
+                                    className="btn btn-primary"
+                                    disabled={!canaisAlterados || isSavingCanais}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                                >
+                                    <Save size={16} />
+                                    <span>{isSavingCanais ? 'Salvando...' : 'Salvar telefone'}</span>
+                                </button>
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
 
@@ -974,352 +1033,174 @@ export default function Configuracoes() {
                 </div>
             )}
 
-            {/* Aba Canais */}
-            {activeTab === 'canais' && (
-                <>
-
-
-                    {/* Responde Chat Token Section */}
-                    <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                borderRadius: '50%',
-                                background: 'var(--bg-card-elevated)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: 'var(--primary)',
-                            }}>
-                                <Plug size={20} />
-                            </div>
-                            <div>
-                                <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    Token Responde Chat
-                                </h3>
-                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                                    Token do Responde Chat. Usado para enviar as respostas ao WhatsApp.
-                                </p>
-                            </div>
+            {/* Aba Asaas */}
+            {activeTab === 'asaas' && (
+                <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                        <div style={{
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '50%',
+                            background: 'var(--bg-card-elevated)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--primary)',
+                        }}>
+                            <FileText size={20} />
                         </div>
-
-                        {/* Status indicator */}
-                        {!isLoading && (
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 'var(--space-2)',
-                                padding: 'var(--space-3) var(--space-4)',
-                                borderRadius: 'var(--radius-md)',
-                                backgroundColor: hasExistingRcToken ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
-                                marginBottom: 'var(--spacing-md)',
-                            }}>
-                                {hasExistingRcToken ? (
-                                    <>
-                                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>
-                                            Token configurado
-                                        </span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>
-                                            Nenhum token configurado
-                                        </span>
-                                    </>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Input */}
-                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
-                                {hasExistingRcToken ? 'Substituir token' : 'Colar token do Responde Chat'}
-                            </label>
-                            <div style={{ position: 'relative' }}>
-                                <input
-                                    type={showRcToken ? 'text' : 'password'}
-                                    value={rcToken}
-                                    onChange={(e) => setRcToken(e.target.value)}
-                                    placeholder={hasExistingRcToken ? 'Cole o novo token para substituir...' : 'Cole o token do Responde Chat aqui...'}
-                                    disabled={isSavingRcToken}
-                                    style={{
-                                        width: '100%',
-                                        padding: '14px',
-                                        paddingRight: '48px',
-                                        background: 'var(--bg-input)',
-                                        border: '1px solid var(--border-subtle)',
-                                        borderRadius: 'var(--radius-md)',
-                                        color: 'var(--text-primary)',
-                                        fontSize: 'var(--text-sm)',
-                                        fontFamily: 'var(--font-mono)',
-                                    }}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowRcToken(!showRcToken)}
-                                    style={{
-                                        position: 'absolute',
-                                        right: '12px',
-                                        top: '50%',
-                                        transform: 'translateY(-50%)',
-                                        background: 'none',
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        color: 'var(--text-tertiary)',
-                                        padding: '4px',
-                                    }}
-                                    title={showRcToken ? 'Ocultar' : 'Mostrar'}
-                                >
-                                    {showRcToken ? <EyeOff size={16} /> : <Eye size={16} />}
-                                </button>
-                            </div>
+                        <div>
+                            <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                Asaas (boleto automático)
+                            </h3>
+                            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                Gera o boleto sozinho quando o cliente fecha no boleto e envia o link + a linha digitável.
+                            </p>
                         </div>
-
-                        {/* Save button */}
-                        <button
-                            onClick={handleSaveRcToken}
-                            className="btn btn-primary"
-                            disabled={!rcToken.trim() || isSavingRcToken}
-                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                        >
-                            <Save size={16} />
-                            <span>{isSavingRcToken ? 'Salvando...' : 'Salvar token'}</span>
-                        </button>
                     </div>
 
-                    {/* Chips adicionais — cada número com token e webhooks próprios */}
-                    <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                borderRadius: '50%',
-                                background: 'var(--bg-card-elevated)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: 'var(--primary)',
-                                flexShrink: 0,
-                            }}>
-                                <Smartphone size={20} />
-                            </div>
-                            <div>
-                                <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    Chips adicionais
-                                </h3>
-                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                                    Cada número extra com seu token e seus webhooks. Os eventos que mexem no lead (IA acionada, lead pronto, remarketing) passam a disparar pelo chip de origem — não mais sempre pelo canal padrão.
-                                </p>
-                            </div>
-                        </div>
-                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginBottom: 0 }}>
-                            O <strong>canal padrão</strong> (mensagens sem <code>&amp;canal=</code> na URL de entrada) continua usando o token e os webhooks das seções acima.
-                        </p>
-                    </div>
-
-                    {canais.map((c, i) => (
-                        <CartaoCanal
-                            key={c._id}
-                            canal={c}
-                            original={canaisOriginais.find((o) => o._id === c._id) || c}
-                            salvando={isSavingCanais}
-                            onChange={(atualizado) => atualizarChip(i, atualizado)}
-                            onRemover={() => removerChip(i)}
-                        />
-                    ))}
-
-                    <div style={{ maxWidth: '600px', marginTop: 'var(--spacing-md)', display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-                        <button
-                            onClick={adicionarChip}
-                            className="btn btn-ghost"
-                            disabled={isSavingCanais}
-                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                        >
-                            <Plus size={16} />
-                            <span>Adicionar chip</span>
-                        </button>
-                        <button
-                            onClick={handleSaveCanais}
-                            className="btn btn-primary"
-                            disabled={!canaisAlterados || isSavingCanais}
-                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                        >
-                            <Save size={16} />
-                            <span>{isSavingCanais ? 'Salvando...' : 'Salvar chips'}</span>
-                        </button>
-                    </div>
-
-                    {/* Asaas — Boleto automático */}
-                    <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                borderRadius: '50%',
-                                background: 'var(--bg-card-elevated)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: 'var(--primary)',
-                            }}>
-                                <FileText size={20} />
-                            </div>
-                            <div>
-                                <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    Asaas (boleto automático)
-                                </h3>
-                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                                    Gera o boleto sozinho quando o cliente fecha no boleto e envia o link + a linha digitável.
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Status da chave */}
-                        {!isLoading && (
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 'var(--space-2)',
-                                padding: 'var(--space-3) var(--space-4)',
-                                borderRadius: 'var(--radius-md)',
-                                backgroundColor: hasExistingAsaasKey ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
-                                marginBottom: 'var(--spacing-md)',
-                            }}>
-                                {hasExistingAsaasKey ? (
-                                    <>
-                                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>Chave configurada</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>Nenhuma chave configurada</span>
-                                    </>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Input da chave */}
-                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
-                                {hasExistingAsaasKey ? 'Substituir chave' : 'Colar chave da API do Asaas'}
-                            </label>
-                            <div style={{ position: 'relative' }}>
-                                <input
-                                    type={showAsaasKey ? 'text' : 'password'}
-                                    value={asaasKey}
-                                    onChange={(e) => setAsaasKey(e.target.value)}
-                                    placeholder={hasExistingAsaasKey ? 'Cole a nova chave para substituir...' : 'Cole a chave (sandbox para testar)...'}
-                                    disabled={isSavingAsaas}
-                                    style={{
-                                        width: '100%',
-                                        padding: '14px',
-                                        paddingRight: '48px',
-                                        background: 'var(--bg-input)',
-                                        border: '1px solid var(--border-subtle)',
-                                        borderRadius: 'var(--radius-md)',
-                                        color: 'var(--text-primary)',
-                                        fontSize: 'var(--text-sm)',
-                                        fontFamily: 'var(--font-mono)',
-                                    }}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowAsaasKey(!showAsaasKey)}
-                                    style={{
-                                        position: 'absolute',
-                                        right: '12px',
-                                        top: '50%',
-                                        transform: 'translateY(-50%)',
-                                        background: 'none',
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        color: 'var(--text-tertiary)',
-                                        padding: '4px',
-                                    }}
-                                    title={showAsaasKey ? 'Ocultar' : 'Mostrar'}
-                                >
-                                    {showAsaasKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                                </button>
-                            </div>
-                        </div>
-
-                        <div style={{ borderTop: '1px solid var(--border-subtle)', margin: 'var(--spacing-md) 0' }} />
-
-                        {/* Ligar/desligar a geração */}
-                        <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--spacing-md)' }}>
-                            <input
-                                type="checkbox"
-                                checked={asaasAtivo}
-                                disabled={isSavingAsaas}
-                                onChange={(e) => setAsaasAtivo(e.target.checked)}
-                            />
-                            <span>Geração automática de boleto ativa</span>
-                        </label>
-
-                        {/* Ambiente */}
-                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Ambiente</label>
-                            <select
-                                value={asaasAmbiente}
-                                disabled={isSavingAsaas}
-                                onChange={(e) => setAsaasAmbiente(e.target.value as 'sandbox' | 'producao')}
-                                style={{
-                                    width: '100%',
-                                    padding: '12px',
-                                    background: 'var(--bg-input)',
-                                    border: '1px solid var(--border-subtle)',
-                                    borderRadius: 'var(--radius-md)',
-                                    color: 'var(--text-primary)',
-                                    fontSize: 'var(--text-sm)',
-                                }}
-                            >
-                                <option value="sandbox">Sandbox (teste — boletos fictícios)</option>
-                                <option value="producao">Produção (boletos reais)</option>
-                            </select>
-                            {asaasAmbiente === 'producao' && (
-                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--warning)', marginTop: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-1)' }}>
-                                    <AlertTriangle size={12} /> Produção emite boletos reais. Confirme que a chave acima é a de produção.
-                                </p>
+                    {/* Status da chave */}
+                    {!isLoading && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'var(--space-2)',
+                            padding: 'var(--space-3) var(--space-4)',
+                            borderRadius: 'var(--radius-md)',
+                            backgroundColor: hasExistingAsaasKey ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
+                            marginBottom: 'var(--spacing-md)',
+                        }}>
+                            {hasExistingAsaasKey ? (
+                                <>
+                                    <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>Chave configurada</span>
+                                </>
+                            ) : (
+                                <>
+                                    <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>Nenhuma chave configurada</span>
+                                </>
                             )}
                         </div>
+                    )}
 
-                        {/* Vencimento */}
-                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Vencimento do boleto (dias)</label>
+                    {/* Input da chave */}
+                    <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                        <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                            {hasExistingAsaasKey ? 'Substituir chave' : 'Colar chave da API do Asaas'}
+                        </label>
+                        <div style={{ position: 'relative' }}>
                             <input
-                                type="number"
-                                min={1}
-                                max={30}
-                                value={asaasVencimento}
+                                type={showAsaasKey ? 'text' : 'password'}
+                                value={asaasKey}
+                                onChange={(e) => setAsaasKey(e.target.value)}
+                                placeholder={hasExistingAsaasKey ? 'Cole a nova chave para substituir...' : 'Cole a chave (sandbox para testar)...'}
                                 disabled={isSavingAsaas}
-                                onChange={(e) => setAsaasVencimento(parseInt(e.target.value, 10) || 0)}
                                 style={{
-                                    width: '120px',
-                                    padding: '12px',
+                                    width: '100%',
+                                    padding: '14px',
+                                    paddingRight: '48px',
                                     background: 'var(--bg-input)',
                                     border: '1px solid var(--border-subtle)',
                                     borderRadius: 'var(--radius-md)',
                                     color: 'var(--text-primary)',
                                     fontSize: 'var(--text-sm)',
+                                    fontFamily: 'var(--font-mono)',
                                 }}
                             />
+                            <button
+                                type="button"
+                                onClick={() => setShowAsaasKey(!showAsaasKey)}
+                                style={{
+                                    position: 'absolute',
+                                    right: '12px',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    color: 'var(--text-tertiary)',
+                                    padding: '4px',
+                                }}
+                                title={showAsaasKey ? 'Ocultar' : 'Mostrar'}
+                            >
+                                {showAsaasKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
                         </div>
-
-                        <button
-                            onClick={handleSaveAsaas}
-                            className="btn btn-primary"
-                            disabled={isSavingAsaas || !asaasAlterado}
-                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                        >
-                            <Save size={16} />
-                            <span>{isSavingAsaas ? 'Salvando...' : asaasAlterado ? 'Salvar tudo' : 'Nada a salvar'}</span>
-                        </button>
                     </div>
-                </>
+
+                    <div style={{ borderTop: '1px solid var(--border-subtle)', margin: 'var(--spacing-md) 0' }} />
+
+                    {/* Ligar/desligar a geração */}
+                    <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--spacing-md)' }}>
+                        <input
+                            type="checkbox"
+                            checked={asaasAtivo}
+                            disabled={isSavingAsaas}
+                            onChange={(e) => setAsaasAtivo(e.target.checked)}
+                        />
+                        <span>Geração automática de boleto ativa</span>
+                    </label>
+
+                    {/* Ambiente */}
+                    <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                        <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Ambiente</label>
+                        <select
+                            value={asaasAmbiente}
+                            disabled={isSavingAsaas}
+                            onChange={(e) => setAsaasAmbiente(e.target.value as 'sandbox' | 'producao')}
+                            style={{
+                                width: '100%',
+                                padding: '12px',
+                                background: 'var(--bg-input)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-md)',
+                                color: 'var(--text-primary)',
+                                fontSize: 'var(--text-sm)',
+                            }}
+                        >
+                            <option value="sandbox">Sandbox (teste — boletos fictícios)</option>
+                            <option value="producao">Produção (boletos reais)</option>
+                        </select>
+                        {asaasAmbiente === 'producao' && (
+                            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--warning)', marginTop: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+                                <AlertTriangle size={12} /> Produção emite boletos reais. Confirme que a chave acima é a de produção.
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Vencimento */}
+                    <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                        <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Vencimento do boleto (dias)</label>
+                        <input
+                            type="number"
+                            min={1}
+                            max={30}
+                            value={asaasVencimento}
+                            disabled={isSavingAsaas}
+                            onChange={(e) => setAsaasVencimento(parseInt(e.target.value, 10) || 0)}
+                            style={{
+                                width: '120px',
+                                padding: '12px',
+                                background: 'var(--bg-input)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-md)',
+                                color: 'var(--text-primary)',
+                                fontSize: 'var(--text-sm)',
+                            }}
+                        />
+                    </div>
+
+                    <button
+                        onClick={handleSaveAsaas}
+                        className="btn btn-primary"
+                        disabled={isSavingAsaas || !asaasAlterado}
+                        style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                    >
+                        <Save size={16} />
+                        <span>{isSavingAsaas ? 'Salvando...' : asaasAlterado ? 'Salvar tudo' : 'Nada a salvar'}</span>
+                    </button>
+                </div>
             )}
         </div>
     );
