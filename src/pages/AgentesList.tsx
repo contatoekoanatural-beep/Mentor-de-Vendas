@@ -1,16 +1,17 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { getAgents, createAgent, updateAgent, deleteAgent } from '../services/firebase';
 import { useProduct } from '../contexts/ProductContext';
 import type { Agent } from '../types';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { InputModal } from '../components/ui/InputModal';
-import { Sparkles, Trash2, Edit2, Play, ChevronLeft } from 'lucide-react';
+import { Sparkles, Edit2, ChevronLeft } from 'lucide-react';
 
 export default function AgentesList() {
     const { productId } = useParams<{ productId: string }>();
     const { products } = useProduct();
-    
+    const navigate = useNavigate();
+
     // States
     const [agents, setAgents] = useState<Agent[]>([]);
     const [loading, setLoading] = useState(true);
@@ -135,14 +136,28 @@ export default function AgentesList() {
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
                     {agents.map((agent) => (
-                        <div key={agent.id} className="card" style={{
-                            padding: 'var(--spacing-md) var(--spacing-lg)',
-                            display: 'flex',
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 'var(--spacing-md)'
-                        }}>
+                        <div
+                            key={agent.id}
+                            className="card"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => navigate(`/produtos/${productId}/agentes/${agent.id}`)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    navigate(`/produtos/${productId}/agentes/${agent.id}`);
+                                }
+                            }}
+                            style={{
+                                padding: 'var(--spacing-md) var(--spacing-lg)',
+                                display: 'flex',
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 'var(--spacing-md)',
+                                cursor: 'pointer'
+                            }}
+                        >
                             <div className="flex items-center gap-3">
                                 <div style={{
                                     width: '40px',
@@ -167,26 +182,15 @@ export default function AgentesList() {
                             </div>
 
                             <div className="flex items-center gap-2">
-                                <Link
-                                    to={`/produtos/${productId}/agentes/${agent.id}`}
-                                    className="btn btn-secondary flex items-center gap-1 btn-sm"
-                                >
-                                    <Play size={14} />
-                                    <span>Abrir</span>
-                                </Link>
                                 <button
-                                    onClick={() => setRenameAgentTarget(agent)}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setRenameAgentTarget(agent);
+                                    }}
                                     className="btn btn-ghost btn-icon btn-sm"
-                                    title="Renomear Agente"
+                                    title="Editar Agente"
                                 >
                                     <Edit2 size={16} />
-                                </button>
-                                <button
-                                    onClick={() => setDeleteAgentTarget(agent)}
-                                    className="btn btn-ghost btn-icon btn-sm text-red-500 hover-bg-red"
-                                    title="Excluir Agente"
-                                >
-                                    <Trash2 size={16} />
                                 </button>
                             </div>
                         </div>
@@ -211,6 +215,12 @@ export default function AgentesList() {
                 initialValue={renameAgentTarget?.name}
                 onConfirm={handleRename}
                 onCancel={() => setRenameAgentTarget(null)}
+                deleteTitle="Excluir Agente"
+                onDelete={() => {
+                    const target = renameAgentTarget;
+                    setRenameAgentTarget(null);
+                    setDeleteAgentTarget(target);
+                }}
             />
 
             <ConfirmModal

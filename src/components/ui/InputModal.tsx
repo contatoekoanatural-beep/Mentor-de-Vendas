@@ -1,4 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react';
+import { Trash2 } from 'lucide-react';
 
 interface InputModalProps {
     isOpen: boolean;
@@ -10,6 +11,8 @@ interface InputModalProps {
     onCancel: () => void;
     confirmText?: string;
     cancelText?: string;
+    onDelete?: () => void;
+    deleteTitle?: string;
 }
 
 export const InputModal = ({
@@ -21,7 +24,9 @@ export const InputModal = ({
     onConfirm,
     onCancel,
     confirmText = 'Confirmar',
-    cancelText = 'Cancelar'
+    cancelText = 'Cancelar',
+    onDelete,
+    deleteTitle = 'Excluir'
 }: InputModalProps) => {
     const [inputValue, setInputValue] = useState(initialValue);
 
@@ -64,13 +69,25 @@ export const InputModal = ({
                             }}
                         />
                     </div>
-                    <div className="modal-footer flex justify-end gap-2 p-4 pt-0 border-t-0">
-                        <button type="button" onClick={onCancel} className="btn btn-secondary">
-                            {cancelText}
-                        </button>
-                        <button type="submit" className="btn btn-primary">
-                            {confirmText}
-                        </button>
+                    <div className={`modal-footer flex items-center gap-2 p-4 pt-0 border-t-0 ${onDelete ? 'justify-between' : 'justify-end'}`}>
+                        {onDelete && (
+                            <button
+                                type="button"
+                                onClick={onDelete}
+                                className="btn btn-ghost btn-icon btn-sm text-red-500 hover-bg-red"
+                                title={deleteTitle}
+                            >
+                                <Trash2 size={18} />
+                            </button>
+                        )}
+                        <div className="flex items-center gap-2">
+                            <button type="button" onClick={onCancel} className="btn btn-secondary">
+                                {cancelText}
+                            </button>
+                            <button type="submit" className="btn btn-primary">
+                                {confirmText}
+                            </button>
+                        </div>
                     </div>
                 </form>
             </div>
