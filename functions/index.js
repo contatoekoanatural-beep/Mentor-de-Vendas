@@ -334,9 +334,11 @@ async function marcarFalhaIA(convRef, motivo, contexto = {}, settingsData = null
 
   if (jaAvisou || !settingsData) return;
 
-  const webhookConfig = settingsData.webhooks?.falhaIA || {};
-  const webhookUrl = webhookConfig.url;
-  const webhookAtivo = webhookConfig.ativo !== false;
+  // Resolve pelo chip de origem (contexto.canal), com o global como padrão —
+  // mesma regra dos demais eventos, para o alerta cair na caixa certa.
+  const wh = resolverWebhook(settingsData, contexto.canal || null, "falhaIA", null);
+  const webhookUrl = wh.url;
+  const webhookAtivo = wh.ativo;
 
   if (!webhookAtivo || !webhookUrl) {
     logger.info("Disparo de falha da IA pulado: webhook inativo ou sem URL", {
@@ -346,7 +348,7 @@ async function marcarFalhaIA(convRef, motivo, contexto = {}, settingsData = null
   }
 
   try {
-    logger.info("Disparando webhook de falha da IA", { ...contexto, url: webhookUrl });
+    logger.info("Disparando webhook de falha da IA", { ...contexto, url: webhookUrl, canal: wh.origem });
     const responseHook = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -1041,7 +1043,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
           },
         }, modelosGemini, { numero, agenteSlug, etapa: "resposta" });
       } catch (errGemini) {
-        await marcarFalhaIA(convRef, errGemini, { numero, agenteSlug },
+        await marcarFalhaIA(convRef, errGemini, { numero, agenteSlug, canal },
           settingsSnap.exists ? settingsSnap.data() : null);
         return response
           .status(200)
@@ -1105,7 +1107,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       // humano, e o webhook de lead ainda precisa disparar.
       if (!respostaLimpa && !leadPronto) {
         await marcarFalhaIA(convRef, "Gemini devolveu resposta vazia", {
-          numero, agenteSlug, finishReason: geminiData.candidates?.[0]?.finishReason,
+          numero, agenteSlug, canal, finishReason: geminiData.candidates?.[0]?.finishReason,
         }, settingsSnap.exists ? settingsSnap.data() : null);
         return response.status(200).json({ error: "respostaVazia", numero });
       }
@@ -1231,7 +1233,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
         } else if (!valorBoleto || valorBoleto < ASAAS_VALOR_MIN || valorBoleto > ASAAS_VALOR_MAX) {
           await marcarFalhaIA(convRef,
             `boleto sem valor válido no marcador (valor=${valorBoleto})`,
-            { numero, agenteSlug }, settingsData);
+            { numero, agenteSlug, canal }, settingsData);
         } else {
           try {
             const boleto = await gerarBoletoAsaas({
@@ -1278,7 +1280,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
           } catch (err) {
             await marcarFalhaIA(convRef,
               `falha ao gerar boleto Asaas: ${String(err).slice(0, 300)}`,
-              { numero, agenteSlug }, settingsData);
+              { numero, agenteSlug, canal }, settingsData);
           }
         }
       }
