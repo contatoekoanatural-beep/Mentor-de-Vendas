@@ -263,6 +263,9 @@ interface PropsCartaoCanal {
  */
 function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCartaoCanal) {
     const [showToken, setShowToken] = useState(false);
+    // Nome/slug começam recolhidos (card limpo, igual ao Claro 4); abrem no lápis.
+    // Um telefone novo (sem slug) já nasce com os campos abertos para preencher.
+    const [editandoDados, setEditandoDados] = useState(canal.slug.trim() === '');
     const tokenConfigurado = canal.token.trim().length > 0;
 
     return (
@@ -280,9 +283,21 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
                         {canal.nome.trim() || 'Novo telefone'}
                     </h3>
                     <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                        Token e webhooks próprios deste número.
+                        {canal.slug.trim()
+                            ? <>Responde pela URL com <code>&amp;canal={canal.slug.trim()}</code>.</>
+                            : 'Defina o nome e o identificador deste número.'}
                     </p>
                 </div>
+                <button
+                    type="button"
+                    className="btn btn-ghost btn-icon"
+                    onClick={() => setEditandoDados((v) => !v)}
+                    disabled={salvando}
+                    title="Editar nome e identificador"
+                    style={{ flexShrink: 0 }}
+                >
+                    <Pencil size={16} />
+                </button>
                 <button
                     type="button"
                     className="btn btn-ghost btn-icon"
@@ -295,40 +310,44 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
                 </button>
             </div>
 
-            <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', flexWrap: 'wrap' }}>
-                <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-                    <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Nome</label>
-                    <input
-                        value={canal.nome}
-                        onChange={(e) => onChange({ ...canal, nome: e.target.value })}
-                        placeholder="Ex.: Claro 2"
-                        disabled={salvando}
-                        style={{
-                            width: '100%', padding: '14px', background: 'var(--bg-input)',
-                            border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
-                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)',
-                        }}
-                    />
-                </div>
-                <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-                    <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Identificador (slug)</label>
-                    <input
-                        value={canal.slug}
-                        onChange={(e) => onChange({ ...canal, slug: e.target.value.trim() })}
-                        placeholder="Ex.: claro2"
-                        disabled={salvando}
-                        style={{
-                            width: '100%', padding: '14px', background: 'var(--bg-input)',
-                            border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
-                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
-                        }}
-                    />
-                </div>
-            </div>
-            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginBottom: 'var(--spacing-md)' }}>
-                A URL de entrada deste telefone no Responde Chat precisa terminar com{' '}
-                <code>&amp;canal={canal.slug.trim() || 'slug'}</code>. Sem isso, a mensagem cai no canal padrão.
-            </p>
+            {editandoDados && (
+                <>
+                    <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', flexWrap: 'wrap' }}>
+                        <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Nome</label>
+                            <input
+                                value={canal.nome}
+                                onChange={(e) => onChange({ ...canal, nome: e.target.value })}
+                                placeholder="Ex.: Claro 2"
+                                disabled={salvando}
+                                style={{
+                                    width: '100%', padding: '14px', background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                                    color: 'var(--text-primary)', fontSize: 'var(--text-sm)',
+                                }}
+                            />
+                        </div>
+                        <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Identificador (slug)</label>
+                            <input
+                                value={canal.slug}
+                                onChange={(e) => onChange({ ...canal, slug: e.target.value.trim() })}
+                                placeholder="Ex.: claro2"
+                                disabled={salvando}
+                                style={{
+                                    width: '100%', padding: '14px', background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                                    color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
+                                }}
+                            />
+                        </div>
+                    </div>
+                    <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginBottom: 'var(--spacing-md)' }}>
+                        A URL de entrada deste telefone no Responde Chat precisa terminar com{' '}
+                        <code>&amp;canal={canal.slug.trim() || 'slug'}</code>. Sem isso, a mensagem cai no canal padrão.
+                    </p>
+                </>
+            )}
 
             <div style={{ marginBottom: 'var(--spacing-md)' }}>
                 <label className="label-section" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
@@ -797,7 +816,7 @@ export default function Configuracoes() {
                     {/* Seletor de telefone */}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', maxWidth: '600px', marginBottom: 'var(--spacing-md)' }}>
                         <button type="button" style={pillStyle(telefoneSelId === 'padrao')} onClick={() => setTelefoneSelId('padrao')}>
-                            <Globe size={14} /> Claro 4 (padrão)
+                            <Globe size={14} /> Claro 4
                         </button>
                         {canais.map((c) => (
                             <button key={c._id} type="button" style={pillStyle(telefoneSelId === c._id)} onClick={() => setTelefoneSelId(c._id)}>
@@ -822,7 +841,7 @@ export default function Configuracoes() {
                                 </div>
                                 <div>
                                     <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                        Claro 4 — canal padrão
+                                        Claro 4
                                     </h3>
                                     <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
                                         Usado quando a mensagem chega sem <code>&amp;canal=</code> na URL de entrada.
