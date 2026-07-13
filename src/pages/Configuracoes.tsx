@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { getAppSettings, saveAppSettings } from '../services/firebase';
+import { getAppSettings, saveAppSettings, saveCanais } from '../services/firebase';
 import { setGeminiKey } from '../services/aiService';
 import { useToast } from '../contexts/ToastContext';
-import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe, Pencil, X, Lock, FileText } from 'lucide-react';
+import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Plug, Globe, Pencil, X, Lock, FileText, Plus, Trash2, Smartphone } from 'lucide-react';
 
 // ----------------------------------------
 // Asaas — geração automática de boleto
@@ -53,6 +53,38 @@ const DEFINICOES: { chave: ChaveWebhook; titulo: string; descricao: string; nota
         descricao: 'Avisa quando a IA não conseguiu responder e o cliente ficou esperando. Uma vez por conversa, até a IA voltar a responder.',
     },
 ];
+
+// ----------------------------------------
+// Chips (canais) — cada número de WhatsApp com token e webhooks próprios.
+// Sem isso, os eventos que mexem no lead (mover p/ atendendo, lead pronto,
+// remarketing) disparam sempre pela automação do canal padrão, na caixa errada.
+// ----------------------------------------
+
+/** Eventos que agem no lead e por isso precisam disparar no chip de origem. */
+type EventoCanal = 'iaAcionada' | 'leadPronto' | 'remarketing';
+
+interface Canal {
+    _id: string;    // id só do cliente, p/ key estável no React — não é persistido
+    slug: string;   // casa com ?canal=<slug> na URL de entrada do Responde Chat
+    nome: string;   // rótulo amigável (ex.: "Claro 2")
+    token: string;  // token do Responde Chat desta conexão
+    webhooks: Record<EventoCanal, ConfigWebhook>;
+}
+
+let seqCanal = 0;
+const novoIdCanal = () => `canal-${Date.now()}-${seqCanal++}`;
+
+const EVENTOS_CANAL: { chave: EventoCanal; titulo: string; descricao: string }[] = [
+    { chave: 'iaAcionada', titulo: 'IA Acionada', descricao: 'Move o lead para "atendendo" quando a IA assume a conversa neste chip.' },
+    { chave: 'leadPronto', titulo: 'Lead Pronto', descricao: 'Dispara quando o cliente escolhe a forma de pagamento neste chip.' },
+    { chave: 'remarketing', titulo: 'Remarketing', descricao: 'Reengaja conversas paradas (~22h) que vieram por este chip.' },
+];
+
+const webhooksCanalVazios = (): Record<EventoCanal, ConfigWebhook> => ({
+    iaAcionada: { url: '', ativo: true },
+    leadPronto: { url: '', ativo: true },
+    remarketing: { url: '', ativo: true },
+});
 
 /** Esconde o miolo da URL: protocolo, host e os últimos caracteres bastam para reconhecê-la. */
 function mascarar(url: string): string {
@@ -216,6 +248,140 @@ function CampoWebhook({ titulo, descricao, notaVazio, cfg, original, salvando, o
     );
 }
 
+interface PropsCartaoCanal {
+    canal: Canal;
+    original: Canal;
+    salvando: boolean;
+    onChange: (c: Canal) => void;
+    onRemover: () => void;
+}
+
+/**
+ * Um chip (canal): nome, slug, token e os webhooks que agem no lead. O slug é o
+ * que amarra tudo — precisa bater com o ?canal=<slug> na URL de entrada, senão o
+ * backend não reconhece o chip e cai no canal padrão.
+ */
+function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCartaoCanal) {
+    const [showToken, setShowToken] = useState(false);
+    const tokenConfigurado = canal.token.trim().length > 0;
+
+    return (
+        <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-md)' }}>
+                <div style={{
+                    width: '40px', height: '40px', borderRadius: '50%',
+                    background: 'var(--bg-card-elevated)', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', flexShrink: 0,
+                }}>
+                    <Smartphone size={20} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {canal.nome.trim() || 'Novo chip'}
+                    </h3>
+                    <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                        Número com token e webhooks próprios.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    className="btn btn-ghost btn-icon"
+                    onClick={onRemover}
+                    disabled={salvando}
+                    title="Remover chip"
+                    style={{ color: '#dc2626', flexShrink: 0 }}
+                >
+                    <Trash2 size={16} />
+                </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                    <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Nome</label>
+                    <input
+                        value={canal.nome}
+                        onChange={(e) => onChange({ ...canal, nome: e.target.value })}
+                        placeholder="Ex.: Claro 2"
+                        disabled={salvando}
+                        style={{
+                            width: '100%', padding: '14px', background: 'var(--bg-input)',
+                            border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)',
+                        }}
+                    />
+                </div>
+                <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                    <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>Identificador (slug)</label>
+                    <input
+                        value={canal.slug}
+                        onChange={(e) => onChange({ ...canal, slug: e.target.value.trim() })}
+                        placeholder="Ex.: claro2"
+                        disabled={salvando}
+                        style={{
+                            width: '100%', padding: '14px', background: 'var(--bg-input)',
+                            border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
+                        }}
+                    />
+                </div>
+            </div>
+            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginBottom: 'var(--spacing-md)' }}>
+                A URL de entrada deste chip no Responde Chat precisa terminar com{' '}
+                <code>&amp;canal={canal.slug.trim() || 'slug'}</code>. Sem isso, a mensagem cai no canal padrão.
+            </p>
+
+            <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                <label className="label-section" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+                    Token do Responde Chat
+                    {tokenConfigurado
+                        ? <span className="badge badge-success" style={{ fontSize: '10px', padding: '1px 6px' }}>configurado</span>
+                        : <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>sem token</span>}
+                </label>
+                <div style={{ position: 'relative' }}>
+                    <input
+                        type={showToken ? 'text' : 'password'}
+                        value={canal.token}
+                        onChange={(e) => onChange({ ...canal, token: e.target.value })}
+                        placeholder="Cole o token desta conexão (Copiar token)..."
+                        disabled={salvando}
+                        style={{
+                            width: '100%', padding: '14px', paddingRight: '48px', background: 'var(--bg-input)',
+                            border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
+                        }}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => setShowToken((s) => !s)}
+                        style={{
+                            position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
+                            background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '4px',
+                        }}
+                        title={showToken ? 'Ocultar' : 'Mostrar'}
+                    >
+                        {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                </div>
+            </div>
+
+            <span className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)', color: 'var(--text-secondary)' }}>
+                Webhooks deste chip
+            </span>
+            {EVENTOS_CANAL.map((ev) => (
+                <CampoWebhook
+                    key={ev.chave}
+                    titulo={ev.titulo}
+                    descricao={ev.descricao}
+                    cfg={canal.webhooks[ev.chave]}
+                    original={original.webhooks[ev.chave]}
+                    salvando={salvando}
+                    onChange={(cfg) => onChange({ ...canal, webhooks: { ...canal.webhooks, [ev.chave]: cfg } })}
+                />
+            ))}
+        </div>
+    );
+}
+
 export default function Configuracoes() {
     const { addToast } = useToast();
     const [activeTab, setActiveTab] = useState<'webhooks' | 'ia' | 'canais'>('webhooks');
@@ -232,12 +398,14 @@ export default function Configuracoes() {
     const [showRcToken, setShowRcToken] = useState(false);
     const [isSavingRcToken, setIsSavingRcToken] = useState(false);
 
-    // Token da 2ª conexão (Claro 2). Cada conexão do Responde Chat tem token
-    // próprio; a resposta sai pelo canal que recebeu (URL do webhook ...&canal=claro2).
-    const [rcTokenClaro2, setRcTokenClaro2] = useState('');
-    const [hasClaro2Token, setHasClaro2Token] = useState(false);
-    const [showClaro2Token, setShowClaro2Token] = useState(false);
-    const [isSavingClaro2Token, setIsSavingClaro2Token] = useState(false);
+    // Chips (canais): cada conexão do Responde Chat tem token e webhooks próprios.
+    // A resposta e os eventos que mexem no lead saem pelo mesmo canal que recebeu
+    // (URL do webhook ...&canal=<slug>), senão tudo cai no canal padrão.
+    const [canais, setCanais] = useState<Canal[]>([]);
+    const [canaisOriginais, setCanaisOriginais] = useState<Canal[]>([]);
+    const [isSavingCanais, setIsSavingCanais] = useState(false);
+
+    const canaisAlterados = JSON.stringify(canais) !== JSON.stringify(canaisOriginais);
 
     const [webhooks, setWebhooks] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
     const [webhooksOriginais, setWebhooksOriginais] = useState<Record<ChaveWebhook, ConfigWebhook>>(WEBHOOKS_VAZIOS);
@@ -276,12 +444,48 @@ export default function Configuracoes() {
                 if (settings && typeof settings.respondechatToken === 'string' && settings.respondechatToken.length > 5) {
                     setHasExistingRcToken(true);
                 }
+                // Monta a lista de chips a partir de settings.canais e migra tokens
+                // legados (respondechatTokens.<slug>) que ainda não tenham um chip.
+                const listaCanais: Canal[] = [];
+                const rawCanais = (settings && settings.canais && typeof settings.canais === 'object')
+                    ? settings.canais as Record<string, {
+                        nome?: string; token?: string;
+                        webhooks?: Partial<Record<EventoCanal, { url?: string; ativo?: boolean }>>;
+                    }>
+                    : {};
+                for (const slug of Object.keys(rawCanais)) {
+                    const c = rawCanais[slug] || {};
+                    const whs = webhooksCanalVazios();
+                    for (const { chave } of EVENTOS_CANAL) {
+                        const w = c.webhooks?.[chave];
+                        if (w) whs[chave] = { url: w.url || '', ativo: w.ativo !== false };
+                    }
+                    listaCanais.push({
+                        _id: novoIdCanal(),
+                        slug,
+                        nome: typeof c.nome === 'string' && c.nome ? c.nome : slug,
+                        token: typeof c.token === 'string' ? c.token : '',
+                        webhooks: whs,
+                    });
+                }
                 if (settings && settings.respondechatTokens && typeof settings.respondechatTokens === 'object') {
                     const tokens = settings.respondechatTokens as Record<string, unknown>;
-                    if (typeof tokens.claro2 === 'string' && tokens.claro2.length > 5) {
-                        setHasClaro2Token(true);
+                    for (const slug of Object.keys(tokens)) {
+                        if (listaCanais.some((c) => c.slug === slug)) continue;
+                        const tok = tokens[slug];
+                        if (typeof tok === 'string' && tok.length > 0) {
+                            listaCanais.push({
+                                _id: novoIdCanal(),
+                                slug,
+                                nome: slug === 'claro2' ? 'Claro 2' : slug,
+                                token: tok,
+                                webhooks: webhooksCanalVazios(),
+                            });
+                        }
                     }
                 }
+                setCanais(listaCanais);
+                setCanaisOriginais(JSON.parse(JSON.stringify(listaCanais)));
                 if (settings && settings.webhooks) {
                     const whs = settings.webhooks as Record<string, { url?: string; ativo?: boolean }>;
                     const carregado = { ...WEBHOOKS_VAZIOS };
@@ -416,30 +620,89 @@ export default function Configuracoes() {
         setIsSavingAsaas(false);
     };
 
-    const handleSaveClaro2Token = async () => {
-        const trimmed = rcTokenClaro2.trim();
-        if (!trimmed) {
-            addToast('Cole o token do Claro 2 antes de salvar.', 'error');
+    const adicionarChip = () => {
+        setCanais((cs) => [...cs, { _id: novoIdCanal(), slug: '', nome: '', token: '', webhooks: webhooksCanalVazios() }]);
+    };
+
+    const atualizarChip = (index: number, canal: Canal) => {
+        setCanais((cs) => cs.map((c, i) => (i === index ? canal : c)));
+    };
+
+    const removerChip = (index: number) => {
+        const c = canais[index];
+        const rotulo = c.nome.trim() || c.slug.trim() || 'este chip';
+        if (!window.confirm(`Remover ${rotulo}? O token e os webhooks dele serão apagados ao salvar.`)) return;
+        setCanais((cs) => cs.filter((_, i) => i !== index));
+    };
+
+    /** Normaliza um chip do estado (trim) para o formato que vai ao Firestore. */
+    const chipNormalizado = (c: Canal) => {
+        const slug = c.slug.trim();
+        return {
+            _id: c._id,
+            slug,
+            nome: c.nome.trim() || slug,
+            token: c.token.trim(),
+            webhooks: {
+                iaAcionada: { url: c.webhooks.iaAcionada.url.trim(), ativo: c.webhooks.iaAcionada.ativo },
+                leadPronto: { url: c.webhooks.leadPronto.url.trim(), ativo: c.webhooks.leadPronto.ativo },
+                remarketing: { url: c.webhooks.remarketing.url.trim(), ativo: c.webhooks.remarketing.ativo },
+            },
+        };
+    };
+
+    const handleSaveCanais = async () => {
+        // Slug obrigatório, formato válido e único — ele amarra o chip ao ?canal=.
+        for (const c of canais) {
+            const slug = c.slug.trim();
+            if (!slug) {
+                addToast('Todo chip precisa de um identificador (slug), ex.: claro5.', 'error');
+                return;
+            }
+            if (!/^[a-z0-9_-]+$/i.test(slug)) {
+                addToast(`O identificador "${slug}" só pode ter letras, números, "-" e "_" (sem espaços).`, 'error');
+                return;
+            }
+        }
+        const slugs = canais.map((c) => c.slug.trim().toLowerCase());
+        if (new Set(slugs).size !== slugs.length) {
+            addToast('Há dois chips com o mesmo identificador (slug). Cada um precisa ser único.', 'error');
             return;
         }
-        if (trimmed.length < 5) {
-            addToast('O token parece inválido (muito curto).', 'error');
-            return;
+        // URLs de webhook precisam começar com http(s).
+        for (const c of canais) {
+            for (const ev of EVENTOS_CANAL) {
+                const url = c.webhooks[ev.chave].url.trim();
+                if (url && !/^https?:\/\//i.test(url)) {
+                    addToast(`A URL de "${ev.titulo}" do ${c.nome.trim() || c.slug} precisa começar com https://`, 'error');
+                    return;
+                }
+            }
         }
 
-        setIsSavingClaro2Token(true);
+        setIsSavingCanais(true);
         try {
-            // Objeto aninhado: merge preserva outros tokens de canal já salvos.
-            await saveAppSettings({ respondechatTokens: { claro2: trimmed } });
-            setHasClaro2Token(true);
-            setRcTokenClaro2('');
-            setShowClaro2Token(false);
-            addToast('Token do Claro 2 salvo com sucesso!', 'success');
+            const canaisSalvar: Record<string, unknown> = {};
+            for (const c of canais) {
+                const norm = chipNormalizado(c);
+                canaisSalvar[norm.slug] = { nome: norm.nome, token: norm.token, webhooks: norm.webhooks };
+            }
+            // Slugs que existiam e sumiram (removidos ou renomeados) precisam ser
+            // apagados de verdade — o merge sozinho deixaria a chave velha no banco.
+            const slugsAtuais = new Set(canais.map((c) => c.slug.trim()));
+            const removidos = canaisOriginais.map((c) => c.slug).filter((slug) => !slugsAtuais.has(slug));
+
+            await saveCanais(canaisSalvar, removidos);
+
+            const salvos: Canal[] = canais.map(chipNormalizado);
+            setCanais(salvos);
+            setCanaisOriginais(JSON.parse(JSON.stringify(salvos)));
+            addToast('Chips salvos com sucesso!', 'success');
         } catch (error) {
-            console.error('Error saving Claro 2 token:', error);
-            addToast('Erro ao salvar o token do Claro 2.', 'error');
+            console.error('Error saving canais:', error);
+            addToast('Erro ao salvar os chips.', 'error');
         }
-        setIsSavingClaro2Token(false);
+        setIsSavingCanais(false);
     };
 
     const handleSaveWebhooks = async () => {
@@ -827,9 +1090,9 @@ export default function Configuracoes() {
                         </button>
                     </div>
 
-                    {/* Token do 2º número — Claro 2 */}
+                    {/* Chips adicionais — cada número com token e webhooks próprios */}
                     <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
                             <div style={{
                                 width: '40px',
                                 height: '40px',
@@ -839,95 +1102,53 @@ export default function Configuracoes() {
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 color: 'var(--primary)',
+                                flexShrink: 0,
                             }}>
-                                <Plug size={20} />
+                                <Smartphone size={20} />
                             </div>
                             <div>
                                 <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    Token do 2º número (Claro 2)
+                                    Chips adicionais
                                 </h3>
                                 <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                                    Token da conexão Claro 2. Faz a Patrícia responder pelo mesmo número que recebeu (URL do webhook com <code>&amp;canal=claro2</code>).
+                                    Cada número extra com seu token e seus webhooks. Os eventos que mexem no lead (IA acionada, lead pronto, remarketing) passam a disparar pelo chip de origem — não mais sempre pelo canal padrão.
                                 </p>
                             </div>
                         </div>
+                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginBottom: 0 }}>
+                            O <strong>canal padrão</strong> (mensagens sem <code>&amp;canal=</code> na URL de entrada) continua usando o token e os webhooks das seções acima.
+                        </p>
+                    </div>
 
-                        {!isLoading && (
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 'var(--space-2)',
-                                padding: 'var(--space-3) var(--space-4)',
-                                borderRadius: 'var(--radius-md)',
-                                backgroundColor: hasClaro2Token ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
-                                marginBottom: 'var(--spacing-md)',
-                            }}>
-                                {hasClaro2Token ? (
-                                    <>
-                                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>Token configurado</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-                                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>Nenhum token configurado</span>
-                                    </>
-                                )}
-                            </div>
-                        )}
+                    {canais.map((c, i) => (
+                        <CartaoCanal
+                            key={c._id}
+                            canal={c}
+                            original={canaisOriginais.find((o) => o._id === c._id) || c}
+                            salvando={isSavingCanais}
+                            onChange={(atualizado) => atualizarChip(i, atualizado)}
+                            onRemover={() => removerChip(i)}
+                        />
+                    ))}
 
-                        <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                            <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
-                                {hasClaro2Token ? 'Substituir token' : 'Colar token do Claro 2'}
-                            </label>
-                            <div style={{ position: 'relative' }}>
-                                <input
-                                    type={showClaro2Token ? 'text' : 'password'}
-                                    value={rcTokenClaro2}
-                                    onChange={(e) => setRcTokenClaro2(e.target.value)}
-                                    placeholder={hasClaro2Token ? 'Cole o novo token para substituir...' : 'Cole o token do Claro 2 (Copiar token na conexão)...'}
-                                    disabled={isSavingClaro2Token}
-                                    style={{
-                                        width: '100%',
-                                        padding: '14px',
-                                        paddingRight: '48px',
-                                        background: 'var(--bg-input)',
-                                        border: '1px solid var(--border-subtle)',
-                                        borderRadius: 'var(--radius-md)',
-                                        color: 'var(--text-primary)',
-                                        fontSize: 'var(--text-sm)',
-                                        fontFamily: 'var(--font-mono)',
-                                    }}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowClaro2Token(!showClaro2Token)}
-                                    style={{
-                                        position: 'absolute',
-                                        right: '12px',
-                                        top: '50%',
-                                        transform: 'translateY(-50%)',
-                                        background: 'none',
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        color: 'var(--text-tertiary)',
-                                        padding: '4px',
-                                    }}
-                                    title={showClaro2Token ? 'Ocultar' : 'Mostrar'}
-                                >
-                                    {showClaro2Token ? <EyeOff size={16} /> : <Eye size={16} />}
-                                </button>
-                            </div>
-                        </div>
-
+                    <div style={{ maxWidth: '600px', marginTop: 'var(--spacing-md)', display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
                         <button
-                            onClick={handleSaveClaro2Token}
+                            onClick={adicionarChip}
+                            className="btn btn-ghost"
+                            disabled={isSavingCanais}
+                            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                        >
+                            <Plus size={16} />
+                            <span>Adicionar chip</span>
+                        </button>
+                        <button
+                            onClick={handleSaveCanais}
                             className="btn btn-primary"
-                            disabled={!rcTokenClaro2.trim() || isSavingClaro2Token}
+                            disabled={!canaisAlterados || isSavingCanais}
                             style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
                         >
                             <Save size={16} />
-                            <span>{isSavingClaro2Token ? 'Salvando...' : 'Salvar token'}</span>
+                            <span>{isSavingCanais ? 'Salvando...' : 'Salvar chips'}</span>
                         </button>
                     </div>
 

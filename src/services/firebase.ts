@@ -28,6 +28,7 @@ import {
     Timestamp,
     serverTimestamp,
     onSnapshot,
+    deleteField,
 } from 'firebase/firestore';
 import type { DocumentData, QueryConstraint } from 'firebase/firestore';
 import {
@@ -560,6 +561,29 @@ export async function saveAppSettings(data: Record<string, unknown>): Promise<vo
     const docRef = doc(db, COLLECTIONS.settings, 'app');
     await setDoc(docRef, {
         ...data,
+        updatedAt: serverTimestamp(),
+    }, { merge: true });
+}
+
+/**
+ * Grava os chips (canais). Como settings é salvo com merge, apagar um chip do
+ * objeto não basta — a chave antiga sobreviveria no Firestore. Por isso os
+ * slugs removidos entram como deleteField() para sumirem de verdade. Renomear
+ * um slug conta como remover o antigo + criar o novo, então também limpa certo.
+ */
+export async function saveCanais(
+    canais: Record<string, unknown>,
+    slugsRemovidos: string[] = [],
+): Promise<void> {
+    const docRef = doc(db, COLLECTIONS.settings, 'app');
+    const canaisPayload: Record<string, unknown> = { ...canais };
+    for (const slug of slugsRemovidos) {
+        if (!(slug in canaisPayload)) {
+            canaisPayload[slug] = deleteField();
+        }
+    }
+    await setDoc(docRef, {
+        canais: canaisPayload,
         updatedAt: serverTimestamp(),
     }, { merge: true });
 }

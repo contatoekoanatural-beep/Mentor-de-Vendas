@@ -31,6 +31,38 @@ setGlobalOptions({ maxInstances: 10 });
 const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE";
 const REMARKETING_THRESHOLD_HORAS = 22;
 
+/**
+ * Escolhe o webhook a disparar levando em conta o canal (chip) de origem.
+ * Cada chip em settings.canais tem seus próprios webhooks. Se o chip tem URL
+ * própria para o evento, ela manda — assim a automação roda na caixa do chip
+ * certo (ex.: mover o lead para "atendendo" na conexão do Claro 2, não na do
+ * Claro 4). Sem canal, ou canal sem URL para o evento, cai no webhook global
+ * (o canal padrão). Um webhook de chip COM URL mas marcado inativo NÃO cai no
+ * global: o dono desligou aquele evento de propósito para aquele chip.
+ * @param {Object} settingsData Documento settings/app.
+ * @param {?string} canal Slug do chip (ex.: "claro2") ou null para o padrão.
+ * @param {string} chave Evento: "iaAcionada" | "leadPronto" | "remarketing".
+ * @param {?string} fallbackUrl URL embutida usada se nem o global tiver URL.
+ * @return {{url: ?string, ativo: boolean, origem: string}}
+ */
+function resolverWebhook(settingsData, canal, chave, fallbackUrl) {
+  const doChip =
+    canal &&
+    settingsData.canais &&
+    settingsData.canais[canal] &&
+    settingsData.canais[canal].webhooks &&
+    settingsData.canais[canal].webhooks[chave];
+  if (doChip && doChip.url) {
+    return { url: doChip.url, ativo: doChip.ativo !== false, origem: canal };
+  }
+  const global = (settingsData.webhooks && settingsData.webhooks[chave]) || {};
+  return {
+    url: global.url || fallbackUrl || null,
+    ativo: global.ativo !== false,
+    origem: "padrao",
+  };
+}
+
 // ----------------------------------------
 // Gemini
 // ----------------------------------------
@@ -1110,12 +1142,12 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
           if (!leadProntoWebhookEnviado) {
             const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
-            const webhookConfig = settingsData.webhooks?.leadPronto || {};
-            const webhookUrl = webhookConfig.url || RESPONDECHAT_WEBHOOK_LEAD;
-            const webhookAtivo = webhookConfig.ativo !== false;
+            const wh = resolverWebhook(settingsData, canal, "leadPronto", RESPONDECHAT_WEBHOOK_LEAD);
+            const webhookUrl = wh.url;
+            const webhookAtivo = wh.ativo;
 
             if (webhookAtivo && webhookUrl) {
-              logger.info("Disparando webhook de lead quente", { numero, url: webhookUrl });
+              logger.info("Disparando webhook de lead quente", { numero, url: webhookUrl, canal: wh.origem });
               const responseHook = await fetch(webhookUrl, {
                 method: "POST",
                 headers: {
@@ -1266,12 +1298,12 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     if (!iaAcionadaEnviado) {
       try {
         const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
-        const webhookConfig = settingsData.webhooks?.iaAcionada || {};
-        const webhookUrl = webhookConfig.url;
-        const webhookAtivo = webhookConfig.ativo !== false;
+        const wh = resolverWebhook(settingsData, canal, "iaAcionada", null);
+        const webhookUrl = wh.url;
+        const webhookAtivo = wh.ativo;
 
         if (webhookAtivo && webhookUrl) {
-          logger.info("Disparando webhook de IA acionada", { numero, url: webhookUrl });
+          logger.info("Disparando webhook de IA acionada", { numero, url: webhookUrl, canal: wh.origem });
           const responseHook = await fetch(webhookUrl, {
             method: "POST",
             headers: {
@@ -1309,6 +1341,7 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
     // sem canal ou sem token específico, cai no token padrão (respondechatToken).
     const settingsDataSend = settingsSnap.exists ? settingsSnap.data() : {};
     const respondechatToken =
+      (canal && settingsDataSend.canais && settingsDataSend.canais[canal] && settingsDataSend.canais[canal].token) ||
       (canal && settingsDataSend.respondechatTokens && settingsDataSend.respondechatTokens[canal]) ||
       settingsDataSend.respondechatToken ||
       null;
@@ -1525,20 +1558,24 @@ async function processarRemarketing() {
   const settingsSnap = await admin.firestore().doc("settings/app").get();
   const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
   const webhookConfig = settingsData.webhooks?.remarketing || {};
-  const webhookUrl = webhookConfig.url || "";
-  const webhookAtivo = webhookConfig.ativo !== false;
   const modoTeste = webhookConfig.modoTeste === true;
   const numeroTeste = webhookConfig.numeroTeste || "";
 
-  if (!webhookAtivo || !webhookUrl) {
-    logger.info("processarRemarketing — webhook inativo ou sem URL", {
-      ativo: webhookAtivo,
-      hasUrl: !!webhookUrl,
-    });
+  // O webhook agora é resolvido POR CONVERSA (cada chip tem o seu), dentro do
+  // loop, olhando data.canal. Por isso não abortamos mais só porque o global
+  // está vazio: um chip pode ter o dele. Só abortamos se não há NENHUM webhook
+  // de remarketing configurado — nem o global (canal padrão), nem em canal algum.
+  const globalRemarketingAtivo = !!webhookConfig.url && webhookConfig.ativo !== false;
+  const algumCanalRemarketing = Object.values(settingsData.canais || {}).some(
+    (c) => c && c.webhooks && c.webhooks.remarketing &&
+      c.webhooks.remarketing.url && c.webhooks.remarketing.ativo !== false,
+  );
+  if (!globalRemarketingAtivo && !algumCanalRemarketing) {
+    logger.info("processarRemarketing — nenhum webhook de remarketing configurado (global ou por canal)");
     return {
       status: "webhook_inativo_ou_sem_url",
-      ativo: webhookAtivo,
-      hasUrl: !!webhookUrl,
+      ativo: false,
+      hasUrl: false,
     };
   }
 
@@ -1615,13 +1652,25 @@ async function processarRemarketing() {
       continue;
     }
 
+    // Cada conversa dispara pelo webhook do SEU chip (data.canal), com o global
+    // como padrão. Assim o remarketing move/mexe o lead na caixa certa.
+    const wh = resolverWebhook(settingsData, data.canal || null, "remarketing", "");
+    if (!wh.ativo || !wh.url) {
+      logger.info("processarRemarketing — sem webhook de remarketing para este canal, pulando", {
+        numero,
+        canal: data.canal || "padrao",
+      });
+      continue;
+    }
+
     try {
       logger.info("processarRemarketing — disparando webhook", {
         numero,
         docId: doc.id,
+        canal: wh.origem,
       });
 
-      const responseHook = await fetch(webhookUrl, {
+      const responseHook = await fetch(wh.url, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
