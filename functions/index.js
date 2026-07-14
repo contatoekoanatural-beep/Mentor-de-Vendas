@@ -38,6 +38,51 @@ const REMARKETING_THRESHOLD_HORAS = 22;
 const VIGIA_JANELA_MIN = 30;
 const VIGIA_MIN_ENVIOS = 5;
 
+// ----------------------------------------
+// Provedores de WhatsApp (o "cano" de entrada/saída)
+// ----------------------------------------
+// Responde Chat e ConverteChat falam quase a mesma língua: webhook de entrada
+// com ?agente=<slug>&canal=<slug>, e envio por POST com Bearer + {number, body}.
+// Só mudam a URL de envio e onde o token mora nas settings. Todo o miolo (Gemini,
+// buffer do funil, áudio, split, lead pronto, boleto, remarketing) é compartilhado
+// em processarWebhookCanal(). Trocar de ferramenta = trocar a tomada, não o aparelho.
+const PROVIDERS = {
+  respondechat: {
+    nome: "respondechat",
+    sendUrl: "https://backend.respondechat.ai/api/messages/send",
+    tokenDoCanal: (c) => c && c.token,
+    tokenPadrao: (s) => s.respondechatToken,
+    tokenLegado: (s, canal) => s.respondechatTokens && s.respondechatTokens[canal],
+  },
+  convertechat: {
+    nome: "convertechat",
+    sendUrl: "https://api.convertechat.com/api/send",
+    // Um chip pode ter os dois tokens ao mesmo tempo (RC em `token`, CC em
+    // `tokenConverteChat`), o que permite testar o CC em paralelo sem derrubar o RC.
+    tokenDoCanal: (c) => c && c.tokenConverteChat,
+    tokenPadrao: (s) => s.convertechatToken,
+    tokenLegado: () => null,
+  },
+};
+
+/**
+ * Resolve o token de envio do chip para o provedor em uso. O token do canal
+ * manda; sem canal ou sem token próprio, cai no token padrão do provedor.
+ * @param {Object} provider Entrada de PROVIDERS.
+ * @param {Object} settingsData Documento settings/app.
+ * @param {?string} canal Slug do chip.
+ * @return {?string} Token ou null.
+ */
+function resolverTokenCanal(provider, settingsData, canal) {
+  const doCanal = canal && settingsData.canais && settingsData.canais[canal];
+  return (
+    provider.tokenDoCanal(doCanal) ||
+    provider.tokenLegado(settingsData, canal) ||
+    provider.tokenPadrao(settingsData) ||
+    null
+  );
+}
+
 /**
  * Escolhe o webhook a disparar levando em conta o canal (chip) de origem.
  * Cada chip em settings.canais tem seus próprios webhooks. Se o chip tem URL
@@ -596,10 +641,13 @@ Só um minutinho que já te envio por aqui mesmo.
 }
 
 // ----------------------------------------
-// webhookRespondeChat — recebe webhook do Responde Chat,
-// gera resposta da Patrícia via Gemini e envia de volta.
+// processarWebhookCanal — miolo COMPARTILHADO entre os provedores.
 // ----------------------------------------
-exports.webhookRespondeChat = onRequest(async (request, response) => {
+// Recebe a mensagem do lead (já no formato do Responde Chat — o ConverteChat é
+// traduzido para cá pelo adaptador em webhookConverteChat), gera a resposta da
+// Patrícia via Gemini e envia de volta pelo provedor de origem.
+// @param {Object} provider Entrada de PROVIDERS (define token e URL de envio).
+async function processarWebhookCanal(provider, request, response) {
   try {
     // 1. Aceitar apenas POST
     if (request.method !== 'POST') {
@@ -1345,28 +1393,32 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       }
     }
 
-    // 19. Token do Responde Chat POR CANAL: cada conexão tem seu token, e a resposta
-    // precisa sair pelo mesmo canal que recebeu. respondechatTokens[canal] manda;
-    // sem canal ou sem token específico, cai no token padrão (respondechatToken).
+    // 19. Token POR CANAL do provedor de origem: cada conexão tem seu token, e a
+    // resposta precisa sair pelo mesmo chip que recebeu. O token do canal manda;
+    // sem canal ou sem token próprio, cai no token padrão do provedor.
     const settingsDataSend = settingsSnap.exists ? settingsSnap.data() : {};
-    const respondechatToken =
-      (canal && settingsDataSend.canais && settingsDataSend.canais[canal] && settingsDataSend.canais[canal].token) ||
-      (canal && settingsDataSend.respondechatTokens && settingsDataSend.respondechatTokens[canal]) ||
-      settingsDataSend.respondechatToken ||
-      null;
+    const tokenCanal = resolverTokenCanal(provider, settingsDataSend, canal);
 
-    if (!respondechatToken) {
-      logger.warn("webhookRespondeChat — sem token respondechat", { canal });
+    if (!tokenCanal) {
+      logger.warn("webhookRespondeChat — sem token do provedor", {
+        canal, provider: provider.nome,
+      });
       return response.status(200).json({
         error: "semToken",
         mensagens,
       });
     }
 
-    // 20. Enviar cada mensagem ao WhatsApp via Responde Chat
+    // 20. Enviar cada mensagem ao WhatsApp pelo provedor de origem
+    // tokenProprioDoCanal diz se o chip usou token PRÓPRIO ou herdou o padrão —
+    // herdar o padrão significa responder por outra conexão, que é justamente a
+    // pegadinha que faz a mensagem "sumir" sem erro.
     logger.info("webhookRespondeChat — enviando", {
       numero, canal,
-      tokenPorCanal: !!(canal && settingsDataSend.respondechatTokens && settingsDataSend.respondechatTokens[canal]),
+      provider: provider.nome,
+      tokenProprioDoCanal: !!provider.tokenDoCanal(
+        canal && settingsDataSend.canais && settingsDataSend.canais[canal],
+      ),
       qtdMensagens: mensagens.length,
     });
     let enviadas = 0;
@@ -1383,11 +1435,11 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
 
       try {
         const sendResponse = await fetch(
-          "https://backend.respondechat.ai/api/messages/send",
+          provider.sendUrl,
           {
             method: "POST",
             headers: {
-              "Authorization": "Bearer " + respondechatToken,
+              "Authorization": "Bearer " + tokenCanal,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -1438,6 +1490,79 @@ exports.webhookRespondeChat = onRequest(async (request, response) => {
       error: "excecao",
       detalhe: String(err),
     });
+  }
+}
+
+// ----------------------------------------
+// webhookRespondeChat — entrada do Responde Chat
+// ----------------------------------------
+exports.webhookRespondeChat = onRequest((request, response) =>
+  processarWebhookCanal(PROVIDERS.respondechat, request, response),
+);
+
+// ----------------------------------------
+// webhookConverteChat — entrada do ConverteChat
+// ----------------------------------------
+// O ConverteChat manda o payload em outro formato ({data: {contact, message}}).
+// Em vez de duplicar as ~700 linhas do miolo, traduzimos o payload para o
+// formato que processarWebhookCanal já entende (o do Responde Chat) e chamamos
+// o mesmo miolo. Só o "cano" muda; o cérebro da Patrícia é o mesmo.
+//
+// ATENÇÃO: o formato abaixo veio da integração antiga (commit 49f70a7) e ainda
+// NÃO foi confirmado contra o ConverteChat de hoje. Por isso logamos o payload
+// cru em DIAG_CONVERTECHAT_PAYLOAD: ao plugar o primeiro número, é só olhar esse
+// log para ver o que realmente chega e ajustar o mapeamento em minutos.
+exports.webhookConverteChat = onRequest(async (request, response) => {
+  try {
+    // Payload cru — a fonte da verdade para ajustar o mapeamento.
+    logger.info("DIAG_CONVERTECHAT_PAYLOAD", {
+      body: JSON.stringify(request.body || {}).slice(0, 4000),
+      query: request.query,
+    });
+
+    const data = (request.body && request.body.data) || {};
+    const msg = data.message || {};
+    const numero = data.contact?.number || data.contact?.phone || "";
+    const texto = msg.body || "";
+    const fromMe = msg.fromMe === true;
+    const mediaUrl = msg.mediaUrl || msg.media?.url || null;
+    const mediaType = msg.mediaType || msg.type || "chat";
+
+    if (!numero) {
+      logger.warn("webhookConverteChat — numero nao encontrado no payload");
+      return response.status(200).json({ ignored: true, reason: "numero_nao_encontrado" });
+    }
+
+    // Traduz para o formato do Responde Chat que o miolo já sabe ler.
+    // `raw.key` carrega o número e o fromMe; `message` carrega texto e mídia.
+    const requestTraduzido = {
+      method: request.method,
+      query: request.query,
+      body: {
+        event: "messages.upsert",
+        contact: { number: numero },
+        message: {
+          body: texto,
+          type: mediaType,
+          mediaUrl,
+          raw: {
+            key: {
+              remoteJid: `${numero}@s.whatsapp.net`,
+              fromMe,
+            },
+            IsFromMe: fromMe,
+          },
+        },
+      },
+    };
+
+    return processarWebhookCanal(PROVIDERS.convertechat, requestTraduzido, response);
+  } catch (err) {
+    logger.error("webhookConverteChat — excecao no adaptador", {
+      error: String(err),
+      stack: err.stack,
+    });
+    return response.status(200).json({ error: "excecao", detalhe: String(err) });
   }
 });
 

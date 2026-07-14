@@ -67,6 +67,11 @@ interface Canal {
     slug: string;   // casa com ?canal=<slug> na URL de entrada do Responde Chat
     nome: string;   // rótulo amigável (ex.: "Claro 2")
     token: string;  // token do Responde Chat desta conexão
+    // Token do ConverteChat da MESMA conexão. Ter os dois lado a lado é o que
+    // permite migrar sem apagão: o chip responde pelo provedor cujo webhook
+    // recebeu a mensagem, então dá para testar o CC num número e manter o resto
+    // no RC até confiar.
+    tokenConverteChat: string;
     webhooks: Record<ChaveWebhook, ConfigWebhook>;
 }
 
@@ -383,6 +388,31 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
                 </div>
             </div>
 
+            <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                <label className="label-section" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+                    Token do ConverteChat
+                    {canal.tokenConverteChat.trim().length > 0
+                        ? <span className="badge badge-success" style={{ fontSize: '10px', padding: '1px 6px' }}>configurado</span>
+                        : <span className="badge" style={{ fontSize: '10px', padding: '1px 6px' }}>opcional</span>}
+                </label>
+                <input
+                    type={showToken ? 'text' : 'password'}
+                    value={canal.tokenConverteChat}
+                    onChange={(e) => onChange({ ...canal, tokenConverteChat: e.target.value })}
+                    placeholder="Cole o token do ConverteChat desta conexão..."
+                    disabled={salvando}
+                    style={{
+                        width: '100%', padding: '14px', background: 'var(--bg-input)',
+                        border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                        color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
+                    }}
+                />
+                <p className="text-muted" style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-2)' }}>
+                    Só é usado se a mensagem entrar pelo webhook do ConverteChat. Preencher aqui
+                    não desliga o Responde Chat — dá para rodar os dois em paralelo enquanto testa.
+                </p>
+            </div>
+
             <span className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)', color: 'var(--text-secondary)' }}>
                 Webhooks deste telefone
             </span>
@@ -490,7 +520,7 @@ export default function Configuracoes() {
                 const listaCanais: Canal[] = [];
                 const rawCanais = (settings && settings.canais && typeof settings.canais === 'object')
                     ? settings.canais as Record<string, {
-                        nome?: string; token?: string;
+                        nome?: string; token?: string; tokenConverteChat?: string;
                         webhooks?: Partial<Record<ChaveWebhook, { url?: string; ativo?: boolean }>>;
                     }>
                     : {};
@@ -506,6 +536,7 @@ export default function Configuracoes() {
                         slug,
                         nome: typeof c.nome === 'string' && c.nome ? c.nome : slug,
                         token: typeof c.token === 'string' ? c.token : '',
+                        tokenConverteChat: typeof c.tokenConverteChat === 'string' ? c.tokenConverteChat : '',
                         webhooks: whs,
                     });
                 }
@@ -520,6 +551,7 @@ export default function Configuracoes() {
                                 slug,
                                 nome: slug === 'claro2' ? 'Claro 2' : slug,
                                 token: tok,
+                                tokenConverteChat: '',
                                 webhooks: webhooksVazios(),
                             });
                         }
@@ -673,7 +705,7 @@ export default function Configuracoes() {
 
     // ---- Chips (telefones não-padrão) ----
     const adicionarTelefone = () => {
-        const novo: Canal = { _id: novoIdCanal(), slug: '', nome: '', token: '', webhooks: webhooksVazios() };
+        const novo: Canal = { _id: novoIdCanal(), slug: '', nome: '', token: '', tokenConverteChat: '', webhooks: webhooksVazios() };
         setCanais((cs) => [...cs, novo]);
         setTelefoneSelId(novo._id);
     };
@@ -697,7 +729,14 @@ export default function Configuracoes() {
         for (const { chave } of DEFINICOES) {
             webhooks[chave] = { url: c.webhooks[chave].url.trim(), ativo: c.webhooks[chave].ativo };
         }
-        return { _id: c._id, slug, nome: c.nome.trim() || slug, token: c.token.trim(), webhooks };
+        return {
+            _id: c._id,
+            slug,
+            nome: c.nome.trim() || slug,
+            token: c.token.trim(),
+            tokenConverteChat: c.tokenConverteChat.trim(),
+            webhooks,
+        };
     };
 
     const handleSaveCanais = async () => {
@@ -734,7 +773,12 @@ export default function Configuracoes() {
             const canaisSalvar: Record<string, unknown> = {};
             for (const c of canais) {
                 const norm = chipNormalizado(c);
-                canaisSalvar[norm.slug] = { nome: norm.nome, token: norm.token, webhooks: norm.webhooks };
+                canaisSalvar[norm.slug] = {
+                    nome: norm.nome,
+                    token: norm.token,
+                    tokenConverteChat: norm.tokenConverteChat,
+                    webhooks: norm.webhooks,
+                };
             }
             // Slugs que existiam e sumiram (removidos ou renomeados) precisam ser
             // apagados de verdade — o merge sozinho deixaria a chave velha no banco.
