@@ -31,6 +31,13 @@ setGlobalOptions({ maxInstances: 10 });
 const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE";
 const REMARKETING_THRESHOLD_HORAS = 22;
 
+// Vigia de saúde dos chips. O Responde Chat responde 200 "Mensagem enviada"
+// mesmo com o chip fora do ar, então o envio "some" sem erro. O vigia detecta
+// isso pelo comportamento (ver vigiaSaudeChips): janela de análise e nº mínimo
+// de leads respondidos para um chip poder ser avaliado.
+const VIGIA_JANELA_MIN = 30;
+const VIGIA_MIN_ENVIOS = 5;
+
 /**
  * Escolhe o webhook a disparar levando em conta o canal (chip) de origem.
  * Cada chip em settings.canais tem seus próprios webhooks. Se o chip tem URL
@@ -1549,6 +1556,126 @@ exports.verificarRemarketingAgendado = onSchedule(
     }
   }
 );
+
+// ----------------------------------------
+// vigiaSaudeChips — vigia de entrega por chip
+// ----------------------------------------
+// Roda de 15 em 15 min. Como o Responde Chat confirma o envio (200) mesmo com o
+// chip offline ou com o WhatsApp segurando a saída, a mensagem se perde sem erro
+// no log. Este vigia detecta a queda pelo comportamento: se, na janela recente,
+// a IA respondeu vários leads de um chip e NENHUM deles escreveu de volta DEPOIS
+// da resposta, as respostas provavelmente não estão chegando. O diagnóstico vai
+// para settings/chipSaude e a bancada (Conversas) exibe o alerta.
+exports.vigiaSaudeChips = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "America/Sao_Paulo",
+    region: "us-central1",
+  },
+  async () => {
+    try {
+      const resultado = await analisarSaudeChips();
+      logger.info("vigiaSaudeChips — concluido", resultado);
+    } catch (err) {
+      logger.error("vigiaSaudeChips — excecao", {
+        error: String(err),
+        stack: err.stack,
+      });
+    }
+  }
+);
+
+/**
+ * Varre as conversas ativas na janela e diagnostica, por chip, se as respostas
+ * da IA parecem não estar sendo entregues. Grava settings/chipSaude.
+ * @return {Promise<Object>} Resumo por canal.
+ */
+async function analisarSaudeChips() {
+  const db = admin.firestore();
+  const agora = Date.now();
+  const inicioJanela = agora - VIGIA_JANELA_MIN * 60 * 1000;
+  const CANAL_PADRAO = "__padrao__";
+
+  const settingsSnap = await db.doc("settings/app").get();
+  const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+
+  // slug do chip -> nome amigável (ex.: "claro2" -> "Claro 2"). O canal padrão
+  // (conversas sem campo canal) entra como "__padrao__".
+  const nomePorSlug = { [CANAL_PADRAO]: "Padrão" };
+  for (const c of Object.values(settingsData.canais || {})) {
+    if (c && c.slug) nomePorSlug[c.slug] = c.nome || c.slug;
+  }
+
+  // Só as conversas mexidas na janela importam — evita varrer a base inteira.
+  const conversationsSnap = await db
+    .collection("conversations")
+    .where("updatedAt", ">=", admin.firestore.Timestamp.fromMillis(inicioJanela))
+    .get();
+
+  // Por canal: quantos leads a IA respondeu na janela e, desses, quantos
+  // escreveram de volta DEPOIS da última resposta da IA (prova de entrega).
+  const stats = {};
+  for (const doc of conversationsSnap.docs) {
+    const data = doc.data();
+    const msgs = Array.isArray(data.messages) ? data.messages : [];
+    if (msgs.length === 0) continue;
+
+    let ultimoModelTs = 0;
+    for (const m of msgs) {
+      if (m && m.role === "model" && typeof m.ts === "number" &&
+          m.ts >= inicioJanela && m.ts > ultimoModelTs) {
+        ultimoModelTs = m.ts;
+      }
+    }
+    if (!ultimoModelTs) continue; // IA não respondeu na janela: não avalia
+
+    const slug = data.canal || CANAL_PADRAO;
+    if (!stats[slug]) stats[slug] = { enviados: 0, comResposta: 0 };
+    stats[slug].enviados++;
+
+    const respondeuDepois = msgs.some(
+      (m) => m && m.role === "user" && typeof m.ts === "number" && m.ts > ultimoModelTs,
+    );
+    if (respondeuDepois) stats[slug].comResposta++;
+  }
+
+  // Preserva o "desde" enquanto o chip continuar suspeito (banner com hora estável).
+  const prevSnap = await db.doc("settings/chipSaude").get();
+  const prev = (prevSnap.exists && prevSnap.data().canais) || {};
+
+  const canais = {};
+  for (const [slug, s] of Object.entries(stats)) {
+    const suspeito = s.enviados >= VIGIA_MIN_ENVIOS && s.comResposta === 0;
+    const antes = prev[slug] || {};
+    canais[slug] = {
+      nome: nomePorSlug[slug] || slug,
+      status: suspeito ? "suspeito" : "ok",
+      enviados: s.enviados,
+      comResposta: s.comResposta,
+      desde: suspeito
+        ? (antes.status === "suspeito" && antes.desde ? antes.desde : agora)
+        : null,
+    };
+  }
+
+  // set (sem merge): chips sem atividade na janela somem do doc — o banner limpa
+  // sozinho, já que sem envios recentes não dá para julgar a entrega.
+  await db.doc("settings/chipSaude").set({
+    atualizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+    janelaMin: VIGIA_JANELA_MIN,
+    minEnvios: VIGIA_MIN_ENVIOS,
+    canais,
+  });
+
+  const suspeitos = Object.entries(canais)
+    .filter(([, v]) => v.status === "suspeito")
+    .map(([slug]) => slug);
+  return {
+    conversasNaJanela: conversationsSnap.size,
+    canaisAvaliados: Object.keys(stats).length,
+    suspeitos,
+  };
+}
 
 /**
  * Processa o remarketing varrendo as conversas no Firestore.

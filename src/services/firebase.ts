@@ -609,6 +609,37 @@ export const subscribeConversations = (
     });
 };
 
+// ----------------------------------------
+// Saúde dos chips (vigia de entrega)
+// ----------------------------------------
+// Espelha settings/chipSaude, gravado pela função agendada vigiaSaudeChips.
+export interface ChipSaude {
+    nome: string;
+    status: 'ok' | 'suspeito';
+    enviados: number;
+    comResposta: number;
+    desde: number | null;
+}
+
+export interface ChipSaudeDoc {
+    atualizadoEm?: unknown;
+    janelaMin?: number;
+    minEnvios?: number;
+    canais: Record<string, ChipSaude>;
+}
+
+/** Assina o diagnóstico de saúde dos chips em tempo real. */
+export const subscribeChipSaude = (
+    callback: (doc: ChipSaudeDoc | null) => void
+) => {
+    const docRef = doc(db, COLLECTIONS.settings, 'chipSaude');
+    return onSnapshot(docRef, (snap) => {
+        callback(snap.exists() ? (snap.data() as ChipSaudeDoc) : null);
+    }, (error) => {
+        console.error('Erro no listener de saúde dos chips:', error);
+    });
+};
+
 export const setConversationAtivo = (id: string, ativo: boolean) =>
     updateDocument(COLLECTIONS.conversations, id, { ativo });
 

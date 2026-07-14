@@ -6,7 +6,8 @@ import { useEffect, useState, useRef } from 'react';
 import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2, Bell, AlertTriangle } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA, subscribeChipSaude } from '../services/firebase';
+import type { ChipSaudeDoc } from '../services/firebase';
 
 // ----------------------------------------
 // Helpers
@@ -73,8 +74,14 @@ export default function Conversas() {
     const [pendentesExpanded, setPendentesExpanded] = useState(false);
     const [busca, setBusca] = useState('');
     const [abaAtiva, setAbaAtiva] = useState<'ativas' | 'arquivados'>('ativas');
+    const [chipSaude, setChipSaude] = useState<ChipSaudeDoc | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // Chips que o vigia marcou como possivelmente fora do ar (entrega travada).
+    const chipsSuspeitos = Object.values(chipSaude?.canais || {}).filter(
+        (c) => c.status === 'suspeito'
+    );
 
     const selected = conversations.find((c) => c.id === selectedId) || null;
 
@@ -118,6 +125,12 @@ export default function Conversas() {
         return () => {
             unsubscribe();
         };
+    }, []);
+
+    // Subscribe to chip health (vigia de entrega) in real time
+    useEffect(() => {
+        const unsubscribe = subscribeChipSaude(setChipSaude);
+        return () => unsubscribe();
     }, []);
 
     // Auto-scroll to the bottom of the chat when selecting a conversation or when new messages arrive
@@ -269,6 +282,39 @@ export default function Conversas() {
                 </div>
                 <span className="conversations-count">{conversations.length} conversa{conversations.length !== 1 ? 's' : ''}</span>
             </div>
+
+            {/* Alerta de chip possivelmente fora do ar (vigia de entrega) */}
+            {chipsSuspeitos.length > 0 && (
+                <div
+                    role="alert"
+                    style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 'var(--space-3)',
+                        padding: 'var(--space-3) var(--space-4)',
+                        margin: '0 0 var(--space-3)',
+                        border: '1px solid #f59e0b',
+                        background: 'rgba(245, 158, 11, 0.12)',
+                        borderRadius: 'var(--radius-md, 8px)',
+                        color: 'var(--text-primary)',
+                    }}
+                >
+                    <AlertTriangle size={20} style={{ color: '#f59e0b', flexShrink: 0, marginTop: 2 }} />
+                    <div style={{ fontSize: 'var(--text-sm)', lineHeight: 1.45 }}>
+                        <strong>
+                            {chipsSuspeitos.length === 1
+                                ? `O chip "${chipsSuspeitos[0].nome}" pode estar fora do ar`
+                                : `${chipsSuspeitos.length} chips podem estar fora do ar`}
+                        </strong>
+                        {chipsSuspeitos.map((c) => (
+                            <div key={c.nome} style={{ color: 'var(--text-secondary)', marginTop: 2 }}>
+                                <strong>{c.nome}</strong>: a IA respondeu {c.enviados} cliente{c.enviados !== 1 ? 's' : ''} e nenhum respondeu de volta
+                                {c.desde ? ` (desde ${formatTime(c.desde)})` : ''} — as mensagens podem não estar chegando. Confira a conexão desse número no Responde Chat.
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Two-column layout */}
             <div className="conversations-layout">
