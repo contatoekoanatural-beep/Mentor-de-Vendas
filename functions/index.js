@@ -1514,9 +1514,13 @@ exports.webhookRespondeChat = onRequest((request, response) =>
 // log para ver o que realmente chega e ajustar o mapeamento em minutos.
 exports.webhookConverteChat = onRequest(async (request, response) => {
   try {
-    // Payload cru — a fonte da verdade para ajustar o mapeamento.
+    // Payload cru — a fonte da verdade para ajustar o mapeamento. rawBody pega
+    // o corpo mesmo quando o content-type não é JSON (o parser deixaria body vazio).
     logger.info("DIAG_CONVERTECHAT_PAYLOAD", {
       body: JSON.stringify(request.body || {}).slice(0, 4000),
+      rawBody: request.rawBody ? request.rawBody.toString("utf8").slice(0, 4000) : null,
+      contentType: request.headers["content-type"] || null,
+      method: request.method,
       query: request.query,
     });
 
