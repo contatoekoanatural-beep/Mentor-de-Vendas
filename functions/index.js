@@ -237,7 +237,7 @@ function enxugarPayload(body) {
  * semana continuam custando zero. O payload original da última fala do cliente
  * é guardado para um eventual replay, que aí sim transcreve.
  */
-async function bufferizarMensagem({ numero, agenteSlug, texto, isFromMe, body }) {
+async function bufferizarMensagem({ numero, agenteSlug, texto, isFromMe, body, canal, provider }) {
   const tipo = body?.message?.type || "text";
   const textoLimpo = (texto && texto.trim())
     ? texto.trim()
@@ -260,6 +260,11 @@ async function bufferizarMensagem({ numero, agenteSlug, texto, isFromMe, body })
       .slice(-BUFFER_MAX_MSGS),
     criadoEm: (snap.exists && snap.data().criadoEm) || agora,
     updatedAt: agora,
+    // Chip e provedor de ORIGEM: o replay do ativarAgente precisa voltar pelo
+    // mesmo cano por onde o lead entrou (ex.: vivo/convertechat), senão a
+    // primeira resposta da IA sai pela API errada e some.
+    canal: canal || null,
+    provider: provider || "respondechat",
   };
 
   if (!isFromMe) {
@@ -323,7 +328,14 @@ async function consumirBuffer(numero, agenteSlug, convRef) {
   try {
     const body = JSON.parse(data.ultimoPayloadCliente);
     body.replayDoBuffer = true;
-    const res = await fetch(`${WEBHOOK_URL}?agente=${encodeURIComponent(agenteSlug)}`, {
+    // Replay pelo mesmo chip/provedor de origem (o payload guardado já está no
+    // formato interno, então o reenvio vai sempre ao webhookRespondeChat — o
+    // ?provider= diz por qual API a resposta deve SAIR).
+    const qsCanal = data.canal ? `&canal=${encodeURIComponent(data.canal)}` : "";
+    const qsProvider = data.provider && data.provider !== "respondechat"
+      ? `&provider=${encodeURIComponent(data.provider)}`
+      : "";
+    const res = await fetch(`${WEBHOOK_URL}?agente=${encodeURIComponent(agenteSlug)}${qsCanal}${qsProvider}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -752,7 +764,10 @@ async function processarWebhookCanal(provider, request, response) {
         logger.warn("webhookRespondeChat — replay sem conversa, ignorado", { numero, agenteSlug });
         return response.status(200).json({ ignored: true, reason: "replay_sem_conversa" });
       }
-      await bufferizarMensagem({ numero, agenteSlug, texto, isFromMe, body: request.body });
+      await bufferizarMensagem({
+        numero, agenteSlug, texto, isFromMe, body: request.body,
+        canal, provider: provider.nome,
+      });
       return response.status(200).json({ ignored: true, reason: "bufferizado" });
     }
 
@@ -1496,8 +1511,15 @@ async function processarWebhookCanal(provider, request, response) {
 // ----------------------------------------
 // webhookRespondeChat — entrada do Responde Chat
 // ----------------------------------------
+// ?provider= permite ao replay do buffer (consumirBuffer) mandar a resposta
+// SAIR pela API de outro provedor (ex.: convertechat) mesmo entrando por aqui,
+// já que o payload bufferizado fica guardado no formato interno.
 exports.webhookRespondeChat = onRequest((request, response) =>
-  processarWebhookCanal(PROVIDERS.respondechat, request, response),
+  processarWebhookCanal(
+    PROVIDERS[request.query.provider] || PROVIDERS.respondechat,
+    request,
+    response,
+  ),
 );
 
 // ----------------------------------------
