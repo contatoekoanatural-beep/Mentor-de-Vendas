@@ -1610,10 +1610,12 @@ exports.ativarAgente = onRequest(async (request, response) => {
       return response.status(200).json({ error: "semSlug" });
     }
 
-    // 3. Obter e normalizar número do corpo
-    const numeroRaw = request.body?.numero;
+    // 3. Obter e normalizar número: corpo OU query (?numero=). A query existe
+    // porque o construtor de fluxo do ConverteChat rejeita headers/corpo JSON
+    // no nó de Integração; com &numero={numero} na URL não precisa de nenhum.
+    const numeroRaw = request.body?.numero || request.query.numero;
     if (!numeroRaw) {
-      logger.warn("ativarAgente — sem numero no corpo", { body: JSON.stringify(request.body) });
+      logger.warn("ativarAgente — sem numero no corpo nem na query", { body: JSON.stringify(request.body) });
       return response.status(200).json({ error: "semNumero" });
     }
 
