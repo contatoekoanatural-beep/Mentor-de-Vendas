@@ -2254,9 +2254,10 @@ async function processarRemarketing() {
  *  - se o cliente respondeu DEPOIS do remarketing → deixa em Ativas (o vendedor
  *    assume);
  *  - passado POS_REMARKETING_ARQUIVAR_HORAS sem resposta:
- *      • se o cliente já tinha escrito algo antes (a IA foi acionada) → ARQUIVA;
- *      • se o cliente NUNCA escreveu nada (IA nunca acionada, lead morto) →
- *        EXCLUI de vez (não há o que treinar/estudar).
+ *      • se a IA (Patrícia) chegou a RESPONDER alguma vez → ARQUIVA (teve conversa
+ *        real, tem valor);
+ *      • se a IA NUNCA respondeu — mesmo que o cliente tenha mandado algo — →
+ *        EXCLUI de vez (lead que não chegou a lugar nenhum, sem o que treinar).
  *
  * Também limpa o BACKLOG: como olha todas as conversas com remarketingEnviado
  * (inclusive as que o fluxo antigo já tinha arquivado), os leads mortos antigos
@@ -2324,9 +2325,15 @@ async function processarCicloVidaPosRemarketing() {
       continue;
     }
 
-    // Prazo estourado sem resposta. Cliente chegou a escrever alguma vez?
-    const clienteEscreveu = msgs.some((m) => m && m.role === "user");
-    if (clienteEscreveu) {
+    // Prazo estourado sem resposta. A IA (Patrícia) chegou a RESPONDER alguma
+    // vez? "Resposta da IA" = mensagem 'model' com texto de verdade — não a nota
+    // de remarketing nem avisos internos do sistema (esses começam com "[").
+    const iaRespondeu = msgs.some(
+      (m) => m && m.role === "model" && typeof m.text === "string" &&
+        m.text.trim() !== "" && !m.text.trim().startsWith("["),
+    );
+    if (iaRespondeu) {
+      // Houve conversa real com a IA → tem valor: arquiva (não exclui).
       if (data.arquivada !== true) {
         batch.update(doc.ref, { arquivada: true });
         ops++;
@@ -2334,7 +2341,8 @@ async function processarCicloVidaPosRemarketing() {
       }
       arquivadas++;
     } else {
-      // Lead morto: nunca escreveu nada. Sem valor de treino → exclui.
+      // A IA nunca respondeu (mesmo que o cliente tenha mandado algo): o lead não
+      // chegou a lugar nenhum nem reagiu ao remarketing. Sem valor → exclui.
       batch.delete(doc.ref);
       ops++;
       await commitSeCheio(false);

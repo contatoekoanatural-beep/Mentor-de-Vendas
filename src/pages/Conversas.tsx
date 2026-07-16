@@ -213,9 +213,10 @@ export default function Conversas() {
         if (faxinando) return;
         if (!window.confirm(
             'Rodar a faxina de leads mortos agora?\n\n' +
-            'Arquiva conversas que receberam remarketing e ficaram 24h sem resposta ' +
-            '(mantendo as que o cliente chegou a conversar) e EXCLUI de vez os leads ' +
-            'que nunca escreveram nada. A exclusão é permanente.'
+            'Nas conversas que receberam remarketing e ficaram 24h sem resposta: ' +
+            'ARQUIVA as que a IA chegou a responder (teve conversa real) e EXCLUI ' +
+            'as que a IA nunca respondeu (mesmo que o cliente tenha mandado algo). ' +
+            'A exclusão é permanente.'
         )) return;
         setFaxinando(true);
         try {
@@ -423,7 +424,7 @@ export default function Conversas() {
                         <button
                             onClick={handleFaxina}
                             disabled={faxinando}
-                            title="Arquiva leads sem resposta e exclui leads que nunca escreveram nada (pós-remarketing)"
+                            title="Arquiva leads que a IA respondeu e exclui os que a IA nunca respondeu (pós-remarketing, 24h)"
                             style={{
                                 display: 'flex', alignItems: 'center', gap: 6,
                                 padding: '6px 12px', borderRadius: '6px',
