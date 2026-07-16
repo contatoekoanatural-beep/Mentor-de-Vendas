@@ -1780,6 +1780,32 @@ exports.removerVendedor = onCall(async (request) => {
   return { ok: true };
 });
 
+// removerConta — apaga QUALQUER conta (menos a própria), inclusive donos/teste.
+// Usada na limpeza da aba Equipe ("Outras contas"). Mais abrangente que
+// removerVendedor (que protege donos de propósito no fluxo de vendedores).
+exports.removerConta = onCall(async (request) => {
+  const donoUid = await exigirDono(request);
+
+  const uid = String(request.data.uid || "");
+  if (!uid) {
+    throw new HttpsError("invalid-argument", "uid ausente.");
+  }
+  if (uid === donoUid) {
+    throw new HttpsError("failed-precondition", "Você não pode remover a si mesmo.");
+  }
+
+  try {
+    await admin.auth().deleteUser(uid);
+  } catch (err) {
+    // Doc órfão (sem conta no Auth) ou já removido: limpa o documento mesmo assim.
+    logger.warn("removerConta — deleteUser falhou, limpando doc", { uid, error: String(err) });
+  }
+  await admin.firestore().collection("users").doc(uid).delete();
+
+  logger.info("removerConta — conta removida", { uid, por: donoUid });
+  return { ok: true };
+});
+
 // ----------------------------------------
 // verificarRemarketingAgendado — Cloud Function agendada para processar o remarketing
 // ----------------------------------------

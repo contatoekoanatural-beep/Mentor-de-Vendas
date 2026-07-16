@@ -239,6 +239,12 @@ export async function removerVendedor(uid: string): Promise<void> {
     await fn({ uid });
 }
 
+/** Remove QUALQUER conta (menos a própria), inclusive donos/teste. Só o dono pode. */
+export async function removerConta(uid: string): Promise<void> {
+    const fn = httpsCallable<{ uid: string }, { ok: boolean }>(functions, 'removerConta');
+    await fn({ uid });
+}
+
 // ----------------------------------------
 // Product Functions
 // ----------------------------------------

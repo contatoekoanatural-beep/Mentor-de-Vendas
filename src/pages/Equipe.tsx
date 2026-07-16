@@ -11,6 +11,7 @@ import {
     getCanaisEmUso,
     criarVendedor,
     removerVendedor,
+    removerConta,
     updateUserCanais,
     tornarVendedor,
 } from '../services/firebase';
@@ -137,6 +138,22 @@ export default function Equipe() {
             console.error('Erro ao salvar chips do vendedor:', e);
             addToast('Não foi possível salvar. Recarregando.', 'error');
             await carregar();
+        } finally {
+            setOcupado(null);
+        }
+    };
+
+    const handleRemoverConta = async (u: User & { id: string }) => {
+        if (ocupado) return;
+        if (!window.confirm(`Excluir a conta de ${u.name || u.email} (${u.email}) DEFINITIVAMENTE? Esta ação não pode ser desfeita.`)) return;
+        setOcupado(u.id);
+        try {
+            await removerConta(u.id);
+            addToast('Conta excluída.', 'success');
+            setUsers((prev) => prev.filter((x) => x.id !== u.id));
+        } catch (e: unknown) {
+            const msg = (e as { message?: string })?.message || 'Erro ao excluir conta.';
+            addToast(msg, 'error');
         } finally {
             setOcupado(null);
         }
@@ -312,14 +329,25 @@ export default function Equipe() {
                                     </div>
                                     <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{u.email}</div>
                                 </div>
-                                <button
-                                    className="btn btn-secondary"
-                                    onClick={() => handleTornarVendedor(u)}
-                                    disabled={ocupado === u.id}
-                                    style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
-                                >
-                                    <UserCog size={15} /> Tornar vendedor
-                                </button>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexShrink: 0 }}>
+                                    <button
+                                        className="btn btn-secondary"
+                                        onClick={() => handleTornarVendedor(u)}
+                                        disabled={ocupado === u.id}
+                                        style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+                                    >
+                                        <UserCog size={15} /> Tornar vendedor
+                                    </button>
+                                    <button
+                                        className="btn btn-ghost btn-icon"
+                                        title="Excluir conta"
+                                        onClick={() => handleRemoverConta(u)}
+                                        disabled={ocupado === u.id}
+                                        style={{ color: '#dc2626' }}
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </div>
                             </div>
                         ))}
                     </div>
