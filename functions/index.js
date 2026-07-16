@@ -1806,6 +1806,77 @@ exports.removerConta = onCall(async (request) => {
   return { ok: true };
 });
 
+// definirSenhaVendedor — o dono define uma nova senha para um vendedor.
+// Robusto contra a bagunça de contas: se o doc do vendedor ficou órfão (a conta
+// do Auth foi apagada, ou está sob outro uid), a função reconecta/recria a conta
+// pelo email e migra o documento para o uid certo, para o login voltar a funcionar.
+exports.definirSenhaVendedor = onCall(async (request) => {
+  await exigirDono(request);
+
+  const uid = String(request.data.uid || "");
+  const novaSenha = String(request.data.senha || "");
+  if (!uid) {
+    throw new HttpsError("invalid-argument", "uid ausente.");
+  }
+  if (novaSenha.length < 6) {
+    throw new HttpsError("invalid-argument", "A senha precisa ter ao menos 6 caracteres.");
+  }
+
+  const usersCol = admin.firestore().collection("users");
+  const docRef = usersCol.doc(uid);
+  const docSnap = await docRef.get();
+  if (!docSnap.exists) {
+    throw new HttpsError("not-found", "Vendedor não encontrado.");
+  }
+  const dados = docSnap.data();
+  const email = String(dados.email || "").trim().toLowerCase();
+  if (!email) {
+    throw new HttpsError("failed-precondition", "Vendedor sem email cadastrado.");
+  }
+
+  // 1. Já existe conta de Auth para ESTE uid: só troca a senha.
+  let authDoUid = null;
+  try {
+    authDoUid = await admin.auth().getUser(uid);
+  } catch (_) { /* sem conta para este uid */ }
+  if (authDoUid) {
+    await admin.auth().updateUser(uid, { password: novaSenha });
+    logger.info("definirSenhaVendedor — senha trocada", { uid, email });
+    return { ok: true, uid };
+  }
+
+  // 2. Doc órfão, mas existe uma conta de Auth com este email (sob outro uid):
+  //    sincroniza a senha e migra o documento do vendedor para o uid do Auth.
+  let authPorEmail = null;
+  try {
+    authPorEmail = await admin.auth().getUserByEmail(email);
+  } catch (_) { /* nenhuma conta com este email */ }
+  if (authPorEmail) {
+    await admin.auth().updateUser(authPorEmail.uid, { password: novaSenha });
+    if (authPorEmail.uid !== uid) {
+      await usersCol.doc(authPorEmail.uid).set({
+        ...dados,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      await docRef.delete();
+    }
+    logger.info("definirSenhaVendedor — reconectado ao Auth existente", { deUid: uid, paraUid: authPorEmail.uid, email });
+    return { ok: true, uid: authPorEmail.uid };
+  }
+
+  // 3. Não existe conta de Auth alguma: cria uma nova com o email e migra o doc.
+  const novo = await admin.auth().createUser({ email, password: novaSenha, displayName: dados.name });
+  await usersCol.doc(novo.uid).set({
+    ...dados,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  if (novo.uid !== uid) {
+    await docRef.delete();
+  }
+  logger.info("definirSenhaVendedor — conta recriada", { deUid: uid, paraUid: novo.uid, email });
+  return { ok: true, uid: novo.uid };
+});
+
 // ----------------------------------------
 // verificarRemarketingAgendado — Cloud Function agendada para processar o remarketing
 // ----------------------------------------

@@ -3,7 +3,7 @@
 // ========================================
 
 import { useEffect, useState, type CSSProperties } from 'react';
-import { Users, UserPlus, Trash2, ShieldCheck, UserCog } from 'lucide-react';
+import { Users, UserPlus, Trash2, ShieldCheck, UserCog, KeyRound } from 'lucide-react';
 import type { User } from '../types';
 import {
     getUsers,
@@ -14,6 +14,7 @@ import {
     removerConta,
     updateUserCanais,
     tornarVendedor,
+    definirSenhaVendedor,
 } from '../services/firebase';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -138,6 +139,27 @@ export default function Equipe() {
             console.error('Erro ao salvar chips do vendedor:', e);
             addToast('Não foi possível salvar. Recarregando.', 'error');
             await carregar();
+        } finally {
+            setOcupado(null);
+        }
+    };
+
+    const handleTrocarSenha = async (u: User & { id: string }) => {
+        if (ocupado) return;
+        const senha = window.prompt(`Nova senha para ${u.name || u.email} (mín. 6 caracteres).\nEle entra com o email ${u.email} e esta senha.`);
+        if (senha === null) return; // cancelou
+        if (senha.trim().length < 6) {
+            addToast('A senha precisa ter ao menos 6 caracteres.', 'warning');
+            return;
+        }
+        setOcupado(u.id);
+        try {
+            await definirSenhaVendedor(u.id, senha.trim());
+            addToast(`Senha definida. ${u.name || 'O vendedor'} entra com ${u.email} e a nova senha.`, 'success', 6000);
+            await carregar();
+        } catch (e: unknown) {
+            const msg = (e as { message?: string })?.message || 'Erro ao definir senha.';
+            addToast(msg, 'error');
         } finally {
             setOcupado(null);
         }
@@ -273,15 +295,26 @@ export default function Equipe() {
                                         <div style={{ fontWeight: 600 }}>{u.name || '(sem nome)'}</div>
                                         <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{u.email}</div>
                                     </div>
-                                    <button
-                                        className="btn btn-ghost btn-icon"
-                                        title="Remover vendedor"
-                                        onClick={() => handleRemover(u)}
-                                        disabled={ocupado === u.id}
-                                        style={{ color: '#dc2626' }}
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexShrink: 0 }}>
+                                        <button
+                                            className="btn btn-secondary"
+                                            title="Definir uma nova senha para este vendedor"
+                                            onClick={() => handleTrocarSenha(u)}
+                                            disabled={ocupado === u.id}
+                                            style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+                                        >
+                                            <KeyRound size={15} /> Trocar senha
+                                        </button>
+                                        <button
+                                            className="btn btn-ghost btn-icon"
+                                            title="Remover vendedor"
+                                            onClick={() => handleRemover(u)}
+                                            disabled={ocupado === u.id}
+                                            style={{ color: '#dc2626' }}
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div style={{ marginTop: 'var(--space-3)' }}>

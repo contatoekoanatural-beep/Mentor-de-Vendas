@@ -245,6 +245,16 @@ export async function removerConta(uid: string): Promise<void> {
     await fn({ uid });
 }
 
+/**
+ * Define uma nova senha para um vendedor. Se a conta de login dele ficou órfã
+ * (Auth apagado), a função reconecta/recria pelo email. Só o dono pode.
+ */
+export async function definirSenhaVendedor(uid: string, senha: string): Promise<{ ok: boolean; uid: string }> {
+    const fn = httpsCallable<{ uid: string; senha: string }, { ok: boolean; uid: string }>(functions, 'definirSenhaVendedor');
+    const res = await fn({ uid, senha });
+    return res.data;
+}
+
 // ----------------------------------------
 // Product Functions
 // ----------------------------------------
