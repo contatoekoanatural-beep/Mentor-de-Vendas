@@ -6,7 +6,7 @@ import { useEffect, useState, useRef } from 'react';
 import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2, Bell, AlertTriangle } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA, subscribeChipSaude, getAppSettings } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA, subscribeChipSaude, getAppSettings, arquivarConversasEmMassa } from '../services/firebase';
 import type { ChipSaudeDoc } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -120,6 +120,7 @@ export default function Conversas() {
     const [chipSaude, setChipSaude] = useState<ChipSaudeDoc | null>(null);
     const [chipNomePorSlug, setChipNomePorSlug] = useState<Record<string, string>>({});
     const [filtroChip, setFiltroChip] = useState<string>('todos');
+    const [limpando, setLimpando] = useState(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -145,9 +146,14 @@ export default function Conversas() {
     const totalAtivas = conversasVisiveis.filter(c => c.arquivada !== true).length;
     const totalArquivadas = conversasVisiveis.filter(c => c.arquivada === true).length;
 
+    // O vendedor não tem a aba "Arquivados" — vê só a lista ativa (bancada limpa).
+    // O dono usa o arquivamento como faxina, mantendo tudo visível para si.
+    const podeVerArquivados = isOwner;
+    const abaEfetiva: 'ativas' | 'arquivados' = podeVerArquivados ? abaAtiva : 'ativas';
+
     // Filtragem por aba ativa
     const tabConversations = conversasVisiveis.filter(c =>
-        abaAtiva === 'ativas' ? c.arquivada !== true : c.arquivada === true
+        abaEfetiva === 'ativas' ? c.arquivada !== true : c.arquivada === true
     );
 
     // Nome amigável de um chip (settings.canais); padrão e desconhecidos têm fallback.
@@ -175,6 +181,30 @@ export default function Conversas() {
     const normais = filteredConversations.filter(
         (conv) => !(conv.status === 'pendente' && (!conv.messages || conv.messages.length === 0))
     );
+
+    // Faxina da bancada: arquiva de uma vez todas as conversas ATIVAS do chip
+    // filtrado. Só o dono, e só com um chip específico selecionado.
+    const idsDoChipAtivas = (isOwner && filtroChip !== 'todos')
+        ? conversasVisiveis.filter(c => chipSlugDe(c) === filtroChip && c.arquivada !== true).map(c => c.id)
+        : [];
+
+    const handleLimparBancada = async () => {
+        if (limpando || idsDoChipAtivas.length === 0) return;
+        const nome = nomeDoChip(filtroChip);
+        if (!window.confirm(
+            `Arquivar todas as ${idsDoChipAtivas.length} conversas de "${nome}"?\n\n` +
+            `Elas saem da lista ativa, mas continuam existindo — você as vê na aba "Arquivados", ` +
+            `e um cliente que voltar a escrever continua sendo atendido. É reversível.`
+        )) return;
+        setLimpando(true);
+        try {
+            await arquivarConversasEmMassa(idsDoChipAtivas, true);
+            setConversations(prev => prev.map(c => idsDoChipAtivas.includes(c.id) ? { ...c, arquivada: true } : c));
+        } catch (e) {
+            console.error('Erro ao arquivar em massa:', e);
+        }
+        setLimpando(false);
+    };
 
     // Subscribe to conversations in real time on mount
     useEffect(() => {
@@ -406,7 +436,8 @@ export default function Conversas() {
             <div className="conversations-layout">
                 {/* Left column: conversation list */}
                 <div className="conversations-list">
-                    {/* Abas Ativas / Arquivados */}
+                    {/* Abas Ativas / Arquivados — só o dono; o vendedor vê só as ativas */}
+                    {podeVerArquivados && (
                     <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-card, #fff)' }}>
                         <button
                             onClick={() => setAbaAtiva('ativas')}
@@ -469,6 +500,7 @@ export default function Conversas() {
                             </span>
                         </button>
                     </div>
+                    )}
 
                     {/* Campo de Busca local */}
                     <div className="conversations-search-bar" style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-color)' }}>
@@ -539,14 +571,37 @@ export default function Conversas() {
                         </div>
                     )}
 
+                    {/* Faxina da bancada: arquivar em massa o chip filtrado (só dono) */}
+                    {isOwner && filtroChip !== 'todos' && abaEfetiva === 'ativas' && idsDoChipAtivas.length > 0 && (
+                        <div style={{ padding: 'var(--space-2) var(--space-4)', borderBottom: '1px solid var(--border-color)' }}>
+                            <button
+                                onClick={handleLimparBancada}
+                                disabled={limpando}
+                                title={`Arquiva todas as conversas ativas de ${nomeDoChip(filtroChip)}`}
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 6,
+                                    width: '100%', justifyContent: 'center',
+                                    padding: '8px 12px', borderRadius: '6px',
+                                    border: '1px solid #f59e0b',
+                                    background: 'rgba(245, 158, 11, 0.10)',
+                                    color: '#b45309', fontSize: '0.8125rem', fontWeight: 600,
+                                    cursor: limpando ? 'default' : 'pointer',
+                                }}
+                            >
+                                <Archive size={15} />
+                                {limpando ? 'Arquivando...' : `Arquivar todas de ${nomeDoChip(filtroChip)} (${idsDoChipAtivas.length})`}
+                            </button>
+                        </div>
+                    )}
+
                     {filteredConversations.length === 0 ? (
                         <div className="conversations-empty-list">
                             <MessageSquare size={32} />
                             <p>
-                                {busca 
-                                    ? 'Nenhum resultado para a busca.' 
-                                    : abaAtiva === 'ativas' 
-                                        ? 'Nenhuma conversa ativa.' 
+                                {busca
+                                    ? 'Nenhum resultado para a busca.'
+                                    : abaEfetiva === 'ativas'
+                                        ? 'Nenhuma conversa ativa.'
                                         : 'Nenhuma conversa arquivada.'}
                             </p>
                         </div>

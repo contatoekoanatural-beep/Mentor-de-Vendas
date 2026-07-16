@@ -29,6 +29,7 @@ import {
     serverTimestamp,
     onSnapshot,
     deleteField,
+    writeBatch,
 } from 'firebase/firestore';
 import type { DocumentData, QueryConstraint } from 'firebase/firestore';
 import {
@@ -718,6 +719,21 @@ export const setConversationRemarketing = (id: string, remarketingAtivo: boolean
 
 export const setConversationArquivada = (id: string, arquivada: boolean) =>
     updateDocument(COLLECTIONS.conversations, id, { arquivada });
+
+/**
+ * Arquiva (ou desarquiva) várias conversas de uma vez, em lotes de 450 (limite
+ * do Firestore é 500 por batch). NÃO mexe em updatedAt para não reordenar a
+ * bancada nem afetar nada — só liga/desliga o campo `arquivada`.
+ */
+export async function arquivarConversasEmMassa(ids: string[], arquivada = true): Promise<void> {
+    for (let i = 0; i < ids.length; i += 450) {
+        const batch = writeBatch(db);
+        for (const id of ids.slice(i, i + 450)) {
+            batch.update(doc(db, COLLECTIONS.conversations, id), { arquivada });
+        }
+        await batch.commit();
+    }
+}
 
 /** Baixa o alerta de falha da IA depois que o vendedor assumiu a conversa. */
 export const limparFalhaIA = (id: string) =>
