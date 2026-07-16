@@ -190,6 +190,21 @@ export const getUser = (id: string) => getDocument<User>(COLLECTIONS.users, id);
 /** Todos os usuários (equipe). Ordenado por nome. */
 export const getUsers = () => getDocuments<User>(COLLECTIONS.users);
 
+/**
+ * Slugs de chip que aparecem nas conversas (mesma fonte dos selos da bancada).
+ * Usado na Equipe para listar os WhatsApp que podem ser liberados a um vendedor,
+ * mesmo os que não têm cartão cadastrado em Configurações. "__padrao__" = sem canal.
+ */
+export async function getCanaisEmUso(): Promise<string[]> {
+    const snapshot = await getDocs(collection(db, COLLECTIONS.conversations));
+    const set = new Set<string>();
+    snapshot.forEach((d) => {
+        const canal = (d.data() as { canal?: string }).canal;
+        set.add(canal || '__padrao__');
+    });
+    return Array.from(set);
+}
+
 /** Atualiza os chips que um vendedor pode ver na bancada. */
 export async function updateUserCanais(uid: string, canaisPermitidos: string[]): Promise<void> {
     await updateDocument(COLLECTIONS.users, uid, { canaisPermitidos });

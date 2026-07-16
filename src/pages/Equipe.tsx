@@ -8,6 +8,7 @@ import type { User } from '../types';
 import {
     getUsers,
     getAppSettings,
+    getCanaisEmUso,
     criarVendedor,
     removerVendedor,
     updateUserCanais,
@@ -41,18 +42,30 @@ export default function Equipe() {
 
     const carregar = async () => {
         try {
-            const [lista, settings] = await Promise.all([getUsers(), getAppSettings()]);
+            const [lista, settings, canaisEmUso] = await Promise.all([
+                getUsers(), getAppSettings(), getCanaisEmUso(),
+            ]);
             setUsers(lista.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR')));
 
+            // Nome amigável dos chips cadastrados em Configurações (se houver).
             const rawCanais = (settings?.canais && typeof settings.canais === 'object')
                 ? settings.canais as Record<string, { slug?: string; nome?: string }>
                 : {};
-            const opcoes: OpcaoChip[] = Object.values(rawCanais)
-                .filter((c) => c?.slug)
-                .map((c) => ({ slug: c.slug as string, nome: c.nome || (c.slug as string) }))
-                .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-            // "Padrão" sempre disponível (conversas sem canal de origem).
-            opcoes.push({ slug: CANAL_PADRAO, nome: 'Padrão' });
+            const nomePorSlug: Record<string, string> = { [CANAL_PADRAO]: 'Padrão' };
+            for (const c of Object.values(rawCanais)) {
+                if (c?.slug) nomePorSlug[c.slug] = c.nome || c.slug;
+            }
+
+            // Opções = chips que aparecem nas conversas (fonte da bancada) +
+            // os cadastrados em Configurações + "Padrão", sem duplicar.
+            const slugs = new Set<string>([CANAL_PADRAO, ...canaisEmUso, ...Object.keys(nomePorSlug)]);
+            const opcoes: OpcaoChip[] = Array.from(slugs)
+                .map((slug) => ({ slug, nome: nomePorSlug[slug] || slug }))
+                .sort((a, b) => {
+                    if (a.slug === CANAL_PADRAO) return 1; // "Padrão" por último
+                    if (b.slug === CANAL_PADRAO) return -1;
+                    return a.nome.localeCompare(b.nome, 'pt-BR');
+                });
             setChips(opcoes);
         } catch (e) {
             console.error('Erro ao carregar equipe:', e);
