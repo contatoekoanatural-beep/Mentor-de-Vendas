@@ -6,8 +6,24 @@ import { useEffect, useState, useRef } from 'react';
 import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2, Bell, AlertTriangle } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA, subscribeChipSaude } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA, subscribeChipSaude, getAppSettings } from '../services/firebase';
 import type { ChipSaudeDoc } from '../services/firebase';
+
+// Slug interno das conversas do canal padrão (sem &canal= na URL de entrada).
+const CANAL_PADRAO = '__padrao__';
+
+/** Slug do chip de uma conversa; conversas sem canal caem no padrão. */
+function chipSlugDe(conv: Conversation): string {
+    return conv.canal || CANAL_PADRAO;
+}
+
+/** Cor estável por chip, para o marcador visual (padrão = cinza neutro). */
+function corDoChip(slug: string): string {
+    if (slug === CANAL_PADRAO) return '#6b7280';
+    let h = 0;
+    for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) % 360;
+    return `hsl(${h}, 60%, 42%)`;
+}
 
 // ----------------------------------------
 // Helpers
@@ -75,6 +91,8 @@ export default function Conversas() {
     const [busca, setBusca] = useState('');
     const [abaAtiva, setAbaAtiva] = useState<'ativas' | 'arquivados'>('ativas');
     const [chipSaude, setChipSaude] = useState<ChipSaudeDoc | null>(null);
+    const [chipNomePorSlug, setChipNomePorSlug] = useState<Record<string, string>>({});
+    const [filtroChip, setFiltroChip] = useState<string>('todos');
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -94,9 +112,46 @@ export default function Conversas() {
         abaAtiva === 'ativas' ? c.arquivada !== true : c.arquivada === true
     );
 
-    // Filtro de busca local por telefone
+    // Nome amigável de um chip (settings.canais); padrão e desconhecidos têm fallback.
+    const nomeDoChip = (slug: string): string =>
+        chipNomePorSlug[slug] || (slug === CANAL_PADRAO ? 'Padrão' : slug);
+
+    // Marcador visual do WhatsApp de origem: pílula com bolinha colorida.
+    const ChipBadge = ({ slug }: { slug: string }) => {
+        const cor = corDoChip(slug);
+        return (
+            <span
+                title={`WhatsApp: ${nomeDoChip(slug)}`}
+                style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    padding: '1px 7px',
+                    borderRadius: '10px',
+                    color: cor,
+                    background: 'color-mix(in srgb, ' + cor + ' 14%, transparent)',
+                    border: '1px solid color-mix(in srgb, ' + cor + ' 35%, transparent)',
+                    whiteSpace: 'nowrap',
+                }}
+            >
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: cor, flexShrink: 0 }} />
+                {nomeDoChip(slug)}
+            </span>
+        );
+    };
+
+    // Chips que realmente aparecem nas conversas — alimentam o filtro. O marcador
+    // e o filtro só fazem sentido quando há mais de um WhatsApp em uso.
+    const chipsEmUso = Array.from(new Set(conversations.map(chipSlugDe)))
+        .sort((a, b) => nomeDoChip(a).localeCompare(nomeDoChip(b), 'pt-BR'));
+    const mostrarChips = chipsEmUso.length > 1;
+
+    // Filtro de busca local por telefone + filtro por chip (WhatsApp)
     const cleanSearch = busca.replace(/\D/g, '');
     const filteredConversations = tabConversations.filter(conv => {
+        if (filtroChip !== 'todos' && chipSlugDe(conv) !== filtroChip) return false;
         if (!cleanSearch) return true;
         const cleanNumero = (conv.numero || '').replace(/\D/g, '');
         return cleanNumero.includes(cleanSearch);
@@ -131,6 +186,25 @@ export default function Conversas() {
     useEffect(() => {
         const unsubscribe = subscribeChipSaude(setChipSaude);
         return () => unsubscribe();
+    }, []);
+
+    // Carrega o nome amigável de cada chip (settings.canais) para o marcador/filtro.
+    useEffect(() => {
+        (async () => {
+            try {
+                const settings = await getAppSettings();
+                const rawCanais = (settings?.canais && typeof settings.canais === 'object')
+                    ? settings.canais as Record<string, { slug?: string; nome?: string }>
+                    : {};
+                const mapa: Record<string, string> = {};
+                for (const c of Object.values(rawCanais)) {
+                    if (c?.slug) mapa[c.slug] = c.nome || c.slug;
+                }
+                setChipNomePorSlug(mapa);
+            } catch (e) {
+                console.error('Erro ao carregar chips:', e);
+            }
+        })();
     }, []);
 
     // Auto-scroll to the bottom of the chat when selecting a conversation or when new messages arrive
@@ -425,6 +499,34 @@ export default function Conversas() {
                         </div>
                     </div>
 
+                    {/* Filtro por WhatsApp (só aparece com mais de um chip em uso) */}
+                    {mostrarChips && (
+                        <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>WhatsApp:</span>
+                            <select
+                                value={filtroChip}
+                                onChange={(e) => setFiltroChip(e.target.value)}
+                                style={{
+                                    flex: 1,
+                                    padding: '6px 10px',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    background: 'var(--bg-input, #fff)',
+                                    color: 'var(--text-main)',
+                                    fontSize: '0.8125rem',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                <option value="todos">Todos os WhatsApp ({conversations.length})</option>
+                                {chipsEmUso.map((slug) => (
+                                    <option key={slug} value={slug}>
+                                        {nomeDoChip(slug)} ({conversations.filter((c) => chipSlugDe(c) === slug).length})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
                     {filteredConversations.length === 0 ? (
                         <div className="conversations-empty-list">
                             <MessageSquare size={32} />
@@ -496,7 +598,10 @@ export default function Conversas() {
                                                             </div>
                                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                                         </div>
-                                                        <div className="conversation-item-agent">{conv.agenteSlug}</div>
+                                                        <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                                                            <span>{conv.agenteSlug}</span>
+                                                            {mostrarChips && <ChipBadge slug={chipSlugDe(conv)} />}
+                                                        </div>
                                                     </button>
                                                 );
                                             })}
@@ -541,8 +646,9 @@ export default function Conversas() {
                                             </div>
                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                         </div>
-                                        <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                                        <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
                                             <span>{conv.agenteSlug}</span>
+                                            {mostrarChips && <ChipBadge slug={chipSlugDe(conv)} />}
                                             {conv.leadPronto === true && (
                                                 <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>
                                                     🔥 Lead pronto
@@ -584,6 +690,7 @@ export default function Conversas() {
                                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                                      <span className="conv-chat-header-numero" style={{ marginRight: 0 }}>{selected.numero}</span>
                                      <span className="conv-chat-header-agent">{selected.agenteSlug}</span>
+                                     {mostrarChips && <ChipBadge slug={chipSlugDe(selected)} />}
                                      {selected.leadPronto === true && (
                                          <span className="badge badge-warning" style={{ marginLeft: 'var(--space-2)' }}>
                                              🔥 Lead pronto
