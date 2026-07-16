@@ -294,6 +294,13 @@ async function consumirBuffer(numero, agenteSlug, convRef) {
   await ref.delete();
   if (!bufferizadas.length) return;
 
+  // O buffer já sabe o chip de origem (gravado em bufferizarMensagem). Sem isto
+  // a conversa nasce SEM canal e cai em "Padrão" na bancada até que uma mensagem
+  // etiquetada chegue depois — grava já na criação para o marcador ficar certo.
+  if (data.canal) {
+    await convRef.set({ canal: data.canal }, { merge: true });
+  }
+
   const ultima = bufferizadas[bufferizadas.length - 1];
   const respondeAgora =
     ultima.role === "user" &&
