@@ -6,7 +6,7 @@ import { useEffect, useState, useRef } from 'react';
 import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2, Bell, AlertTriangle } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
-import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA, subscribeChipSaude, getAppSettings, arquivarConversasEmMassa } from '../services/firebase';
+import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA, subscribeChipSaude, getAppSettings, arquivarConversasEmMassa, rodarFaxinaConversas } from '../services/firebase';
 import type { ChipSaudeDoc } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -121,6 +121,7 @@ export default function Conversas() {
     const [chipNomePorSlug, setChipNomePorSlug] = useState<Record<string, string>>({});
     const [filtroChip, setFiltroChip] = useState<string>('todos');
     const [limpando, setLimpando] = useState(false);
+    const [faxinando, setFaxinando] = useState(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -204,6 +205,27 @@ export default function Conversas() {
             console.error('Erro ao arquivar em massa:', e);
         }
         setLimpando(false);
+    };
+
+    // Faxina do ciclo de vida sob demanda (só dono): arquiva engajados sem
+    // resposta e exclui leads mortos que já passaram pelo remarketing.
+    const handleFaxina = async () => {
+        if (faxinando) return;
+        if (!window.confirm(
+            'Rodar a faxina de leads mortos agora?\n\n' +
+            'Arquiva conversas que receberam remarketing e ficaram 24h sem resposta ' +
+            '(mantendo as que o cliente chegou a conversar) e EXCLUI de vez os leads ' +
+            'que nunca escreveram nada. A exclusão é permanente.'
+        )) return;
+        setFaxinando(true);
+        try {
+            const r = await rodarFaxinaConversas();
+            window.alert(`Faxina concluída:\n\n• ${r.excluidas} leads mortos excluídos\n• ${r.arquivadas} arquivados\n• ${r.mantidas} mantidos em ativas`);
+        } catch (e) {
+            console.error('Erro na faxina:', e);
+            window.alert('Erro ao rodar a faxina. Tente de novo.');
+        }
+        setFaxinando(false);
     };
 
     // Subscribe to conversations in real time on mount
@@ -396,7 +418,27 @@ export default function Conversas() {
                         Acompanhe as conversas dos agentes com os clientes.
                     </p>
                 </div>
-                <span className="conversations-count">{conversasVisiveis.length} conversa{conversasVisiveis.length !== 1 ? 's' : ''}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                    {isOwner && (
+                        <button
+                            onClick={handleFaxina}
+                            disabled={faxinando}
+                            title="Arquiva leads sem resposta e exclui leads que nunca escreveram nada (pós-remarketing)"
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                padding: '6px 12px', borderRadius: '6px',
+                                border: '1px solid var(--border-color)',
+                                background: 'transparent', color: 'var(--text-secondary, #6b7280)',
+                                fontSize: '0.8125rem', fontWeight: 500,
+                                cursor: faxinando ? 'default' : 'pointer',
+                            }}
+                        >
+                            <Trash2 size={14} />
+                            {faxinando ? 'Limpando...' : 'Limpar leads mortos'}
+                        </button>
+                    )}
+                    <span className="conversations-count">{conversasVisiveis.length} conversa{conversasVisiveis.length !== 1 ? 's' : ''}</span>
+                </div>
             </div>
 
             {/* Alerta de chip possivelmente fora do ar (vigia de entrega) */}

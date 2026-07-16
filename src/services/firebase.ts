@@ -256,6 +256,21 @@ export async function definirSenhaVendedor(uid: string, senha: string): Promise<
     return res.data;
 }
 
+export interface ResumoFaxina {
+    ok: boolean;
+    total: number;
+    arquivadas: number;
+    excluidas: number;
+    mantidas: number;
+}
+
+/** Roda a faxina do ciclo de vida (arquiva engajados / exclui leads mortos). Só o dono. */
+export async function rodarFaxinaConversas(): Promise<ResumoFaxina> {
+    const fn = httpsCallable<undefined, ResumoFaxina>(functions, 'rodarFaxinaConversas');
+    const res = await fn();
+    return res.data;
+}
+
 // ----------------------------------------
 // Product Functions
 // ----------------------------------------

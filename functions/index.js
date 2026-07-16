@@ -30,6 +30,10 @@ setGlobalOptions({ maxInstances: 10 });
 
 const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE";
 const REMARKETING_THRESHOLD_HORAS = 22;
+// Quanto tempo a conversa fica em Ativas DEPOIS do remarketing, esperando o
+// cliente reagir. Passado esse prazo sem resposta, ela sai da bancada:
+// arquivada se o cliente já tinha conversado, excluída se nunca escreveu nada.
+const POS_REMARKETING_ARQUIVAR_HORAS = 24;
 
 // Vigia de saúde dos chips. O Responde Chat responde 200 "Mensagem enviada"
 // mesmo com o chip fora do ar, então o envio "some" sem erro. O vigia detecta
@@ -1877,6 +1881,15 @@ exports.definirSenhaVendedor = onCall(async (request) => {
   return { ok: true, uid: novo.uid };
 });
 
+// rodarFaxinaConversas — dispara a faxina do ciclo de vida SOB DEMANDA (só o
+// dono). Roda apenas a limpeza (arquiva/exclui), SEM disparar remarketing.
+// Serve para limpar o backlog na hora e ver a contagem, sem esperar o agendado.
+exports.rodarFaxinaConversas = onCall(async (request) => {
+  await exigirDono(request);
+  const resumo = await processarCicloVidaPosRemarketing();
+  return { ok: true, ...resumo };
+});
+
 // ----------------------------------------
 // verificarRemarketingAgendado — Cloud Function agendada para processar o remarketing
 // ----------------------------------------
@@ -1894,6 +1907,17 @@ exports.verificarRemarketingAgendado = onSchedule(
       logger.error("verificarRemarketingAgendado — excecao", {
         error: String(err),
         stack: err.stack,
+      });
+    }
+
+    // Faxina do ciclo de vida: arquiva engajados sem resposta e exclui leads
+    // mortos, passado o prazo pós-remarketing. Roda logo depois do remarketing.
+    try {
+      const faxina = await processarCicloVidaPosRemarketing();
+      logger.info("verificarRemarketingAgendado — faxina concluida", faxina);
+    } catch (err) {
+      logger.error("verificarRemarketingAgendado — falha na faxina pos-remarketing", {
+        error: String(err),
       });
     }
 
@@ -2180,10 +2204,13 @@ async function processarRemarketing() {
           ts: Date.now(),
         });
 
+        // NÃO arquiva mais na hora: a conversa fica em Ativas para o vendedor ver
+        // o lead reagir ao remarketing. Quem tira da bancada depois é a faxina
+        // pós-remarketing (processarCicloVidaPosRemarketing), passado o prazo.
         await doc.ref.set({
           messages: msgsRemarket,
           remarketingEnviado: true,
-          arquivada: true,
+          remarketingTs: Date.now(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
 
@@ -2217,4 +2244,110 @@ async function processarRemarketing() {
     processadas,
     falhas,
   };
+}
+
+/**
+ * Faxina pós-remarketing (ciclo de vida da conversa na bancada).
+ *
+ * Roda junto do remarketing (de hora em hora). Para cada conversa que JÁ recebeu
+ * remarketing e ainda não foi fechada como lead pronto:
+ *  - se o cliente respondeu DEPOIS do remarketing → deixa em Ativas (o vendedor
+ *    assume);
+ *  - passado POS_REMARKETING_ARQUIVAR_HORAS sem resposta:
+ *      • se o cliente já tinha escrito algo antes (a IA foi acionada) → ARQUIVA;
+ *      • se o cliente NUNCA escreveu nada (IA nunca acionada, lead morto) →
+ *        EXCLUI de vez (não há o que treinar/estudar).
+ *
+ * Também limpa o BACKLOG: como olha todas as conversas com remarketingEnviado
+ * (inclusive as que o fluxo antigo já tinha arquivado), os leads mortos antigos
+ * caem aqui e são removidos na primeira passada.
+ *
+ * @return {Promise<Object>} Resumo (arquivadas, excluidas, mantidas).
+ */
+async function processarCicloVidaPosRemarketing() {
+  const NOTA_REMARKETING = "[Enviamos uma mensagem de remarketing";
+  const prazoMs = POS_REMARKETING_ARQUIVAR_HORAS * 60 * 60 * 1000;
+  const agora = Date.now();
+
+  const snap = await admin.firestore().collection("conversations").get();
+
+  let arquivadas = 0;
+  let excluidas = 0;
+  let mantidas = 0;
+  let batch = admin.firestore().batch();
+  let ops = 0;
+  const commitSeCheio = async (force) => {
+    if (ops >= 450 || (force && ops > 0)) {
+      await batch.commit();
+      batch = admin.firestore().batch();
+      ops = 0;
+    }
+  };
+
+  for (const doc of snap.docs) {
+    const data = doc.data();
+
+    // Só entra no ciclo quem já foi remarketizado e não fechou.
+    if (data.remarketingEnviado !== true || data.leadPronto === true) continue;
+
+    const msgs = Array.isArray(data.messages) ? data.messages : [];
+
+    // Momento do remarketing: campo novo, ou a nota interna, ou criadoEm (antigos).
+    let rmTs = typeof data.remarketingTs === "number" ? data.remarketingTs : 0;
+    if (!rmTs) {
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m && m.role === "model" && typeof m.text === "string" &&
+            m.text.startsWith(NOTA_REMARKETING) && typeof m.ts === "number") {
+          rmTs = m.ts;
+          break;
+        }
+      }
+    }
+    if (!rmTs && typeof data.criadoEm === "number") rmTs = data.criadoEm;
+
+    // Cliente reagiu ao remarketing? (mensagem do cliente depois do disparo)
+    const respondeuDepois = msgs.some(
+      (m) => m && m.role === "user" && typeof m.ts === "number" && m.ts > rmTs,
+    );
+    if (respondeuDepois) {
+      // Reengajou: garante que fique visível em Ativas para o vendedor assumir.
+      if (data.arquivada === true) {
+        batch.update(doc.ref, { arquivada: false });
+        ops++;
+        await commitSeCheio(false);
+      }
+      mantidas++;
+      continue;
+    }
+
+    // Sem resposta: ainda dentro do prazo? Deixa quieto.
+    if (rmTs && (agora - rmTs) < prazoMs) {
+      mantidas++;
+      continue;
+    }
+
+    // Prazo estourado sem resposta. Cliente chegou a escrever alguma vez?
+    const clienteEscreveu = msgs.some((m) => m && m.role === "user");
+    if (clienteEscreveu) {
+      if (data.arquivada !== true) {
+        batch.update(doc.ref, { arquivada: true });
+        ops++;
+        await commitSeCheio(false);
+      }
+      arquivadas++;
+    } else {
+      // Lead morto: nunca escreveu nada. Sem valor de treino → exclui.
+      batch.delete(doc.ref);
+      ops++;
+      await commitSeCheio(false);
+      excluidas++;
+    }
+  }
+
+  await commitSeCheio(true);
+
+  const resumo = { total: snap.size, arquivadas, excluidas, mantidas };
+  logger.info("processarCicloVidaPosRemarketing — concluido", resumo);
+  return resumo;
 }
