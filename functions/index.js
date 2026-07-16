@@ -2307,16 +2307,13 @@ async function processarCicloVidaPosRemarketing() {
     if (!rmTs && typeof data.criadoEm === "number") rmTs = data.criadoEm;
 
     // Cliente reagiu ao remarketing? (mensagem do cliente depois do disparo)
+    // Se reagiu, é uma conversa viva: deixa como está (não arquiva nem exclui).
+    // Não desarquiva de propósito — ressurgir conversa velha iria contra a
+    // limpeza; conversa nova remarketizada já fica em Ativas por padrão.
     const respondeuDepois = msgs.some(
       (m) => m && m.role === "user" && typeof m.ts === "number" && m.ts > rmTs,
     );
     if (respondeuDepois) {
-      // Reengajou: garante que fique visível em Ativas para o vendedor assumir.
-      if (data.arquivada === true) {
-        batch.update(doc.ref, { arquivada: false });
-        ops++;
-        await commitSeCheio(false);
-      }
       mantidas++;
       continue;
     }
