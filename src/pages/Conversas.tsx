@@ -604,10 +604,10 @@ export default function Conversas() {
                                     cursor: 'pointer',
                                 }}
                             >
-                                <option value="todos">Todos os WhatsApp ({conversasVisiveis.length})</option>
+                                <option value="todos">Todos os WhatsApp</option>
                                 {chipsEmUso.map((slug) => (
                                     <option key={slug} value={slug}>
-                                        {nomeDoChip(slug)} ({conversasVisiveis.filter((c) => chipSlugDe(c) === slug).length})
+                                        {nomeDoChip(slug)}
                                     </option>
                                 ))}
                             </select>
