@@ -130,9 +130,10 @@ export default function Conversas() {
 
     const { user, isOwner } = useAuth();
 
-    // Vendedor só enxerga as conversas dos chips liberados para ele; o dono vê
-    // tudo. Vendedor sem nenhum chip liberado não vê conversa alguma.
-    const restringirPorChip = !isOwner && Array.isArray(user?.canaisPermitidos);
+    // Só o proprietário vê tudo. Qualquer não-dono (vendedor) é sempre restrito
+    // aos chips liberados — sem nenhum chip, não vê conversa alguma (fail-safe:
+    // nunca cair no "vê tudo" por falta de configuração).
+    const restringirPorChip = !isOwner;
     const canaisPermitidos = user?.canaisPermitidos || [];
     const conversasVisiveis = restringirPorChip
         ? conversations.filter((c) => canaisPermitidos.includes(chipSlugDe(c)))

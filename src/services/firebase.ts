@@ -210,6 +210,15 @@ export async function updateUserCanais(uid: string, canaisPermitidos: string[]):
     await updateDocument(COLLECTIONS.users, uid, { canaisPermitidos });
 }
 
+/**
+ * Converte uma conta existente em vendedor (restrito). Mantém o mesmo login/senha
+ * — só muda o papel; os chips começam vazios (o dono marca em seguida). É só uma
+ * mudança de documento, não mexe na conta do Auth.
+ */
+export async function tornarVendedor(uid: string): Promise<void> {
+    await updateDocument(COLLECTIONS.users, uid, { role: 'seller', canaisPermitidos: [] });
+}
+
 export interface CriarVendedorInput {
     nome: string;
     email: string;

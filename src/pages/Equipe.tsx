@@ -3,7 +3,7 @@
 // ========================================
 
 import { useEffect, useState, type CSSProperties } from 'react';
-import { Users, UserPlus, Trash2, ShieldCheck } from 'lucide-react';
+import { Users, UserPlus, Trash2, ShieldCheck, UserCog } from 'lucide-react';
 import type { User } from '../types';
 import {
     getUsers,
@@ -12,8 +12,10 @@ import {
     criarVendedor,
     removerVendedor,
     updateUserCanais,
+    tornarVendedor,
 } from '../services/firebase';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
 
 // Slug interno das conversas sem canal de origem (igual à bancada).
 const CANAL_PADRAO = '__padrao__';
@@ -25,6 +27,7 @@ interface OpcaoChip {
 
 export default function Equipe() {
     const { addToast } = useToast();
+    const { user: contaAtual } = useAuth();
 
     const [users, setUsers] = useState<(User & { id: string })[]>([]);
     const [chips, setChips] = useState<OpcaoChip[]>([]);
@@ -81,6 +84,9 @@ export default function Equipe() {
     }, []);
 
     const vendedores = users.filter((u) => u.role === 'seller');
+    // Contas que ainda não são vendedores (donos/admins), exceto você mesmo —
+    // candidatas a serem convertidas em vendedor restrito.
+    const outrasContas = users.filter((u) => u.role !== 'seller' && u.id !== contaAtual?.id);
 
     const toggleNovoChip = (slug: string) => {
         setNovoChips((cur) => cur.includes(slug) ? cur.filter((s) => s !== slug) : [...cur, slug]);
@@ -131,6 +137,22 @@ export default function Equipe() {
             console.error('Erro ao salvar chips do vendedor:', e);
             addToast('Não foi possível salvar. Recarregando.', 'error');
             await carregar();
+        } finally {
+            setOcupado(null);
+        }
+    };
+
+    const handleTornarVendedor = async (u: User & { id: string }) => {
+        if (ocupado) return;
+        if (!window.confirm(`Converter ${u.name || u.email} em vendedor? Ele mantém o mesmo login, mas passa a ver só os WhatsApp que você liberar (nenhum, no início).`)) return;
+        setOcupado(u.id);
+        try {
+            await tornarVendedor(u.id);
+            addToast(`${u.name || u.email} agora é vendedor. Marque os WhatsApp dele abaixo.`, 'success');
+            await carregar();
+        } catch (e: unknown) {
+            const msg = (e as { message?: string })?.message || 'Erro ao converter conta.';
+            addToast(msg, 'error');
         } finally {
             setOcupado(null);
         }
@@ -266,6 +288,42 @@ export default function Equipe() {
                         );
                     })}
                 </div>
+            )}
+
+            {/* Outras contas: quem já tem login e ainda vê tudo (dono/admin) e
+                pode ser convertido em vendedor restrito, mantendo o mesmo login. */}
+            {!loading && outrasContas.length > 0 && (
+                <>
+                    <h2 style={{ fontSize: '1.05rem', margin: 'var(--space-6, 24px) 0 var(--space-3)' }}>
+                        Outras contas <span className="text-muted">({outrasContas.length})</span>
+                    </h2>
+                    <p className="text-muted" style={{ marginTop: 0, fontSize: '0.8125rem' }}>
+                        Contas que hoje veem tudo. Converta em vendedor para restringir aos WhatsApp que você escolher — o login e a senha continuam os mesmos.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                        {outrasContas.map((u) => (
+                            <div key={u.id} style={{ ...cardStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-3)' }}>
+                                <div>
+                                    <div style={{ fontWeight: 600 }}>
+                                        {u.name || '(sem nome)'}
+                                        <span className="text-muted" style={{ fontWeight: 400, marginLeft: 8, fontSize: '0.75rem' }}>
+                                            {u.role === 'owner' ? 'Proprietário' : u.role === 'admin' ? 'Administrador' : u.role}
+                                        </span>
+                                    </div>
+                                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{u.email}</div>
+                                </div>
+                                <button
+                                    className="btn btn-secondary"
+                                    onClick={() => handleTornarVendedor(u)}
+                                    disabled={ocupado === u.id}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+                                >
+                                    <UserCog size={15} /> Tornar vendedor
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </>
             )}
         </div>
     );
