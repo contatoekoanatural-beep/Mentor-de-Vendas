@@ -15,6 +15,7 @@ import AgentesList from './pages/AgentesList';
 import AgenteDetalhe from './pages/AgenteDetalhe';
 import Conversas from './pages/Conversas';
 import Configuracoes from './pages/Configuracoes';
+import Equipe from './pages/Equipe';
 import './index.css';
 
 // Load Gemini API key from Firestore on app start
@@ -40,10 +41,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Rotas só do dono (Agentes, Configurações, Equipe). O vendedor que digitar a
+// URL na mão é mandado para as Conversas — não basta esconder o menu.
+function OwnerRoute({ children }: { children: React.ReactNode }) {
+  const { isOwner } = useAuth();
+  if (!isOwner) {
+    return <Navigate to="/conversas" replace />;
+  }
+  return <>{children}</>;
+}
+
 
 // App Routes
 function AppRoutes() {
-  const { user } = useAuth();
+  const { user, isOwner } = useAuth();
 
   return (
     <Routes>
@@ -64,12 +75,13 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/produtos" replace />} />
-        <Route path="produtos" element={<Produtos />} />
-        <Route path="produtos/:productId/agentes" element={<AgentesList />} />
-        <Route path="produtos/:productId/agentes/:agentId" element={<AgenteDetalhe />} />
+        <Route index element={<Navigate to={isOwner ? '/produtos' : '/conversas'} replace />} />
+        <Route path="produtos" element={<OwnerRoute><Produtos /></OwnerRoute>} />
+        <Route path="produtos/:productId/agentes" element={<OwnerRoute><AgentesList /></OwnerRoute>} />
+        <Route path="produtos/:productId/agentes/:agentId" element={<OwnerRoute><AgenteDetalhe /></OwnerRoute>} />
         <Route path="conversas" element={<Conversas />} />
-        <Route path="configuracoes" element={<Configuracoes />} />
+        <Route path="configuracoes" element={<OwnerRoute><Configuracoes /></OwnerRoute>} />
+        <Route path="equipe" element={<OwnerRoute><Equipe /></OwnerRoute>} />
       </Route>
 
       {/* Fallback */}

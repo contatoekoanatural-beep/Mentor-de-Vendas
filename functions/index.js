@@ -8,7 +8,7 @@
  */
 
 const {setGlobalOptions} = require("firebase-functions");
-const {onRequest} = require("firebase-functions/https");
+const {onRequest, onCall, HttpsError} = require("firebase-functions/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
@@ -1684,6 +1684,100 @@ exports.ativarAgente = onRequest(async (request, response) => {
       detalhe: String(err),
     });
   }
+});
+
+// ----------------------------------------
+// Equipe — criar/remover vendedor (acesso restrito a chips na bancada)
+// ----------------------------------------
+// O dono cria a conta do vendedor SEM sair da própria sessão (só o Admin SDK
+// consegue criar um usuário do Auth sem logar como ele). A conta já nasce como
+// role "seller", que na bancada só enxerga as conversas dos chips liberados e
+// nunca vê Configurações (tokens). Chamadas onCall: exigem o dono autenticado.
+
+/** Garante que quem chamou está logado e é o proprietário. Retorna o uid. */
+async function exigirDono(request) {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Faça login para continuar.");
+  }
+  const snap = await admin.firestore().collection("users").doc(uid).get();
+  if (!snap.exists || snap.data().role !== "owner") {
+    throw new HttpsError("permission-denied", "Apenas o proprietário pode gerenciar a equipe.");
+  }
+  return uid;
+}
+
+exports.criarVendedor = onCall(async (request) => {
+  const donoUid = await exigirDono(request);
+
+  const email = String(request.data.email || "").trim().toLowerCase();
+  const senha = String(request.data.senha || "");
+  const nome = String(request.data.nome || "").trim();
+  const canaisPermitidos = Array.isArray(request.data.canaisPermitidos)
+    ? request.data.canaisPermitidos.filter((c) => typeof c === "string")
+    : [];
+
+  if (!email || !senha || !nome) {
+    throw new HttpsError("invalid-argument", "Informe nome, email e senha.");
+  }
+  if (senha.length < 6) {
+    throw new HttpsError("invalid-argument", "A senha precisa ter ao menos 6 caracteres.");
+  }
+
+  let userRecord;
+  try {
+    userRecord = await admin.auth().createUser({ email, password: senha, displayName: nome });
+  } catch (err) {
+    if (err.code === "auth/email-already-exists") {
+      throw new HttpsError("already-exists", "Este email já está cadastrado.");
+    }
+    if (err.code === "auth/invalid-email") {
+      throw new HttpsError("invalid-argument", "Email inválido.");
+    }
+    logger.error("criarVendedor — falha ao criar conta no Auth", { error: String(err) });
+    throw new HttpsError("internal", "Não foi possível criar a conta.");
+  }
+
+  await admin.firestore().collection("users").doc(userRecord.uid).set({
+    email,
+    name: nome,
+    role: "seller",
+    canaisPermitidos,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  logger.info("criarVendedor — vendedor criado", { uid: userRecord.uid, email, por: donoUid });
+  return { ok: true, uid: userRecord.uid };
+});
+
+exports.removerVendedor = onCall(async (request) => {
+  const donoUid = await exigirDono(request);
+
+  const uid = String(request.data.uid || "");
+  if (!uid) {
+    throw new HttpsError("invalid-argument", "uid ausente.");
+  }
+  if (uid === donoUid) {
+    throw new HttpsError("failed-precondition", "Você não pode remover a si mesmo.");
+  }
+
+  // Nunca apaga outro proprietário por engano.
+  const alvo = await admin.firestore().collection("users").doc(uid).get();
+  if (alvo.exists && alvo.data().role === "owner") {
+    throw new HttpsError("failed-precondition", "Não é possível remover um proprietário.");
+  }
+
+  try {
+    await admin.auth().deleteUser(uid);
+  } catch (err) {
+    // Se a conta do Auth já não existir, segue e limpa o documento mesmo assim.
+    logger.warn("removerVendedor — deleteUser falhou, limpando doc", { uid, error: String(err) });
+  }
+  await admin.firestore().collection("users").doc(uid).delete();
+
+  logger.info("removerVendedor — vendedor removido", { uid, por: donoUid });
+  return { ok: true };
 });
 
 // ----------------------------------------

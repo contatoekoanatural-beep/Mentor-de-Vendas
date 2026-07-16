@@ -37,6 +37,7 @@ import {
     uploadBytes,
     getDownloadURL,
 } from 'firebase/storage';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import type {
     User,
     Product,
@@ -75,6 +76,7 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const functions = getFunctions(app);
 
 // ----------------------------------------
 // Auth Functions
@@ -184,6 +186,34 @@ export async function getDocuments<T>(
 // User Functions
 // ----------------------------------------
 export const getUser = (id: string) => getDocument<User>(COLLECTIONS.users, id);
+
+/** Todos os usuários (equipe). Ordenado por nome. */
+export const getUsers = () => getDocuments<User>(COLLECTIONS.users);
+
+/** Atualiza os chips que um vendedor pode ver na bancada. */
+export async function updateUserCanais(uid: string, canaisPermitidos: string[]): Promise<void> {
+    await updateDocument(COLLECTIONS.users, uid, { canaisPermitidos });
+}
+
+export interface CriarVendedorInput {
+    nome: string;
+    email: string;
+    senha: string;
+    canaisPermitidos: string[];
+}
+
+/** Cria a conta de um vendedor (via Cloud Function, Admin SDK). Só o dono pode. */
+export async function criarVendedor(input: CriarVendedorInput): Promise<{ ok: boolean; uid: string }> {
+    const fn = httpsCallable<CriarVendedorInput, { ok: boolean; uid: string }>(functions, 'criarVendedor');
+    const res = await fn(input);
+    return res.data;
+}
+
+/** Remove um vendedor (conta do Auth + documento). Só o dono pode. */
+export async function removerVendedor(uid: string): Promise<void> {
+    const fn = httpsCallable<{ uid: string }, { ok: boolean }>(functions, 'removerVendedor');
+    await fn({ uid });
+}
 
 // ----------------------------------------
 // Product Functions

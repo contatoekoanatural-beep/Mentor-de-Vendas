@@ -7,6 +7,7 @@ import {
     Bot,
     MessageSquare,
     Settings,
+    Users,
     LogOut,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -17,6 +18,7 @@ const navItems = [
     // encostar no prompt ou nas integrações.
     { path: '/produtos', label: 'Agentes', icon: Bot, ownerOnly: true },
     { path: '/conversas', label: 'Conversas', icon: MessageSquare, ownerOnly: false },
+    { path: '/equipe', label: 'Equipe', icon: Users, ownerOnly: true },
     { path: '/configuracoes', label: 'Configurações', icon: Settings, ownerOnly: true },
 ];
 

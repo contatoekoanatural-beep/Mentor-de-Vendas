@@ -8,6 +8,7 @@ import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
 import { setConversationAtivo, resetConversation, subscribeConversations, setConversationArquivada, deleteConversation, setConversationRemarketing, limparFalhaIA, subscribeChipSaude, getAppSettings } from '../services/firebase';
 import type { ChipSaudeDoc } from '../services/firebase';
+import { useAuth } from '../contexts/AuthContext';
 
 // Slug interno das conversas do canal padrão (sem &canal= na URL de entrada).
 const CANAL_PADRAO = '__padrao__';
@@ -23,6 +24,32 @@ function corDoChip(slug: string): string {
     let h = 0;
     for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) % 360;
     return `hsl(${h}, 60%, 42%)`;
+}
+
+/** Marcador visual do WhatsApp de origem: pílula com bolinha colorida. */
+function ChipBadge({ slug, nome }: { slug: string; nome: string }) {
+    const cor = corDoChip(slug);
+    return (
+        <span
+            title={`WhatsApp: ${nome}`}
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '10px',
+                fontWeight: 600,
+                padding: '1px 7px',
+                borderRadius: '10px',
+                color: cor,
+                background: 'color-mix(in srgb, ' + cor + ' 14%, transparent)',
+                border: '1px solid color-mix(in srgb, ' + cor + ' 35%, transparent)',
+                whiteSpace: 'nowrap',
+            }}
+        >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: cor, flexShrink: 0 }} />
+            {nome}
+        </span>
+    );
 }
 
 // ----------------------------------------
@@ -101,14 +128,24 @@ export default function Conversas() {
         (c) => c.status === 'suspeito'
     );
 
-    const selected = conversations.find((c) => c.id === selectedId) || null;
+    const { user, isOwner } = useAuth();
+
+    // Vendedor só enxerga as conversas dos chips liberados para ele; o dono vê
+    // tudo. Vendedor sem nenhum chip liberado não vê conversa alguma.
+    const restringirPorChip = !isOwner && Array.isArray(user?.canaisPermitidos);
+    const canaisPermitidos = user?.canaisPermitidos || [];
+    const conversasVisiveis = restringirPorChip
+        ? conversations.filter((c) => canaisPermitidos.includes(chipSlugDe(c)))
+        : conversations;
+
+    const selected = conversasVisiveis.find((c) => c.id === selectedId) || null;
 
     // Contagem de conversas por aba
-    const totalAtivas = conversations.filter(c => c.arquivada !== true).length;
-    const totalArquivadas = conversations.filter(c => c.arquivada === true).length;
+    const totalAtivas = conversasVisiveis.filter(c => c.arquivada !== true).length;
+    const totalArquivadas = conversasVisiveis.filter(c => c.arquivada === true).length;
 
     // Filtragem por aba ativa
-    const tabConversations = conversations.filter(c => 
+    const tabConversations = conversasVisiveis.filter(c =>
         abaAtiva === 'ativas' ? c.arquivada !== true : c.arquivada === true
     );
 
@@ -116,35 +153,9 @@ export default function Conversas() {
     const nomeDoChip = (slug: string): string =>
         chipNomePorSlug[slug] || (slug === CANAL_PADRAO ? 'Padrão' : slug);
 
-    // Marcador visual do WhatsApp de origem: pílula com bolinha colorida.
-    const ChipBadge = ({ slug }: { slug: string }) => {
-        const cor = corDoChip(slug);
-        return (
-            <span
-                title={`WhatsApp: ${nomeDoChip(slug)}`}
-                style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    fontSize: '10px',
-                    fontWeight: 600,
-                    padding: '1px 7px',
-                    borderRadius: '10px',
-                    color: cor,
-                    background: 'color-mix(in srgb, ' + cor + ' 14%, transparent)',
-                    border: '1px solid color-mix(in srgb, ' + cor + ' 35%, transparent)',
-                    whiteSpace: 'nowrap',
-                }}
-            >
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: cor, flexShrink: 0 }} />
-                {nomeDoChip(slug)}
-            </span>
-        );
-    };
-
     // Chips que realmente aparecem nas conversas — alimentam o filtro. O marcador
     // e o filtro só fazem sentido quando há mais de um WhatsApp em uso.
-    const chipsEmUso = Array.from(new Set(conversations.map(chipSlugDe)))
+    const chipsEmUso = Array.from(new Set(conversasVisiveis.map(chipSlugDe)))
         .sort((a, b) => nomeDoChip(a).localeCompare(nomeDoChip(b), 'pt-BR'));
     const mostrarChips = chipsEmUso.length > 1;
 
@@ -354,7 +365,7 @@ export default function Conversas() {
                         Acompanhe as conversas dos agentes com os clientes.
                     </p>
                 </div>
-                <span className="conversations-count">{conversations.length} conversa{conversations.length !== 1 ? 's' : ''}</span>
+                <span className="conversations-count">{conversasVisiveis.length} conversa{conversasVisiveis.length !== 1 ? 's' : ''}</span>
             </div>
 
             {/* Alerta de chip possivelmente fora do ar (vigia de entrega) */}
@@ -517,10 +528,10 @@ export default function Conversas() {
                                     cursor: 'pointer',
                                 }}
                             >
-                                <option value="todos">Todos os WhatsApp ({conversations.length})</option>
+                                <option value="todos">Todos os WhatsApp ({conversasVisiveis.length})</option>
                                 {chipsEmUso.map((slug) => (
                                     <option key={slug} value={slug}>
-                                        {nomeDoChip(slug)} ({conversations.filter((c) => chipSlugDe(c) === slug).length})
+                                        {nomeDoChip(slug)} ({conversasVisiveis.filter((c) => chipSlugDe(c) === slug).length})
                                     </option>
                                 ))}
                             </select>
@@ -600,7 +611,7 @@ export default function Conversas() {
                                                         </div>
                                                         <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
                                                             <span>{conv.agenteSlug}</span>
-                                                            {mostrarChips && <ChipBadge slug={chipSlugDe(conv)} />}
+                                                            {mostrarChips && <ChipBadge slug={chipSlugDe(conv)} nome={nomeDoChip(chipSlugDe(conv))} />}
                                                         </div>
                                                     </button>
                                                 );
@@ -648,7 +659,7 @@ export default function Conversas() {
                                         </div>
                                         <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
                                             <span>{conv.agenteSlug}</span>
-                                            {mostrarChips && <ChipBadge slug={chipSlugDe(conv)} />}
+                                            {mostrarChips && <ChipBadge slug={chipSlugDe(conv)} nome={nomeDoChip(chipSlugDe(conv))} />}
                                             {conv.leadPronto === true && (
                                                 <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>
                                                     🔥 Lead pronto
@@ -690,7 +701,7 @@ export default function Conversas() {
                                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                                      <span className="conv-chat-header-numero" style={{ marginRight: 0 }}>{selected.numero}</span>
                                      <span className="conv-chat-header-agent">{selected.agenteSlug}</span>
-                                     {mostrarChips && <ChipBadge slug={chipSlugDe(selected)} />}
+                                     {mostrarChips && <ChipBadge slug={chipSlugDe(selected)} nome={nomeDoChip(chipSlugDe(selected))} />}
                                      {selected.leadPronto === true && (
                                          <span className="badge badge-warning" style={{ marginLeft: 'var(--space-2)' }}>
                                              🔥 Lead pronto

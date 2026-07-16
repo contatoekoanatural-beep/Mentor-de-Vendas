@@ -14,6 +14,10 @@ export interface User {
     email: string;
     name: string;
     role: UserRole;
+    // Slugs dos chips (WhatsApp) que este usuário pode ver na bancada. Só se
+    // aplica a vendedores; o proprietário vê tudo. "__padrao__" = conversas sem
+    // canal de origem. Ausente/vazio = nenhum chip liberado.
+    canaisPermitidos?: string[];
     createdAt: Timestamp;
 }
 
