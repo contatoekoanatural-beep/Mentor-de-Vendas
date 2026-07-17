@@ -746,6 +746,14 @@ async function processarWebhookCanal(provider, request, response) {
     // Cada conexão do Responde Chat tem token próprio; a resposta precisa sair pelo
     // MESMO canal que recebeu a mensagem, senão vai tudo pelo canal padrão.
     const canal = request.query.canal || null;
+    // Rede de segurança: com o "canal padrão" aposentado (todo chip tem &canal=),
+    // mensagem SEM canal é sinal de URL mal configurada. Ainda respondemos pelo
+    // token/webhooks globais para não perder o lead, mas registramos o aviso.
+    if (!canal) {
+      logger.warn("webhookRespondeChat — mensagem SEM &canal= (usando fallback global)", {
+        numero, agenteSlug, provider: provider.nome,
+      });
+    }
 
     // 7. Extrair texto da mensagem
     let texto = request.body.message?.body || "";

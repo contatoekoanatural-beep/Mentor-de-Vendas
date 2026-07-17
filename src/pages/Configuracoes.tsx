@@ -2,7 +2,7 @@ import { useState, useEffect, type CSSProperties } from 'react';
 import { getAppSettings, saveAppSettings, saveCanais } from '../services/firebase';
 import { setGeminiKey } from '../services/aiService';
 import { useToast } from '../contexts/ToastContext';
-import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Globe, Pencil, X, Lock, FileText, Plus, Trash2, Smartphone } from 'lucide-react';
+import { Key, Eye, EyeOff, Save, CheckCircle, AlertTriangle, Pencil, X, Lock, FileText, Plus, Trash2, Smartphone } from 'lucide-react';
 
 // ----------------------------------------
 // Asaas — geração automática de boleto
@@ -475,19 +475,12 @@ export default function Configuracoes() {
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
-    // Seletor de telefone da aba Webhooks: 'padrao' (Claro 4) ou o _id de um chip.
-    const [telefoneSelId, setTelefoneSelId] = useState<string>('padrao');
+    // Seletor de telefone da aba Webhooks: o _id do chip selecionado.
+    const [telefoneSelId, setTelefoneSelId] = useState<string>('');
 
-    // Canal padrão (Claro 4): token e webhooks globais.
-    const [rcTokenValue, setRcTokenValue] = useState('');
-    const [rcTokenOriginal, setRcTokenOriginal] = useState('');
-    const [showRcTokenVal, setShowRcTokenVal] = useState(false);
-
-    const [webhooks, setWebhooks] = useState<Record<ChaveWebhook, ConfigWebhook>>(webhooksVazios());
-    const [webhooksOriginais, setWebhooksOriginais] = useState<Record<ChaveWebhook, ConfigWebhook>>(webhooksVazios());
-    const [isSavingWebhooks, setIsSavingWebhooks] = useState(false);
-
-    // Chips (telefones não-padrão): cada um com token e webhooks próprios.
+    // Chips (telefones): cada um com token e webhooks próprios. O antigo "canal
+    // padrão" (Claro 4) agora é um chip normal, migrado na carga a partir do
+    // token/webhooks globais. O global fica como rede de segurança no backend.
     const [canais, setCanais] = useState<Canal[]>([]);
     const [canaisOriginais, setCanaisOriginais] = useState<Canal[]>([]);
     const [isSavingCanais, setIsSavingCanais] = useState(false);
@@ -510,13 +503,6 @@ export default function Configuracoes() {
     // Botão único "Salvar tudo": habilita se mudou a config OU se há uma nova chave digitada.
     const asaasAlterado = asaasCfgAlterada || asaasKey.trim().length > 0;
 
-    // Canal padrão: mudou algum webhook OU o token?
-    const chavesAlteradas = (Object.keys(webhooks) as ChaveWebhook[]).filter(
-        (k) => webhooks[k].url !== webhooksOriginais[k].url || webhooks[k].ativo !== webhooksOriginais[k].ativo
-    );
-    const rcTokenAlterado = rcTokenValue.trim() !== rcTokenOriginal.trim();
-    const padraoAlterado = chavesAlteradas.length > 0 || rcTokenAlterado;
-
     const canaisAlterados = JSON.stringify(canais) !== JSON.stringify(canaisOriginais);
 
     const telefoneSel = canais.find((c) => c._id === telefoneSelId) || null;
@@ -530,24 +516,22 @@ export default function Configuracoes() {
                     setHasExistingKey(true);
                 }
 
-                if (settings && typeof settings.respondechatToken === 'string') {
-                    setRcTokenValue(settings.respondechatToken);
-                    setRcTokenOriginal(settings.respondechatToken);
-                }
-
+                // Token e webhooks globais (do antigo "canal padrão"): viram a
+                // base do chip "claro4" migrado logo abaixo, se ele ainda não
+                // existir em settings.canais.
+                const globalToken = (settings && typeof settings.respondechatToken === 'string')
+                    ? settings.respondechatToken : '';
+                const globalWebhooks = webhooksVazios();
                 if (settings && settings.webhooks) {
                     const whs = settings.webhooks as Record<string, { url?: string; ativo?: boolean }>;
-                    const carregado = webhooksVazios();
                     for (const { chave } of DEFINICOES) {
                         if (whs[chave]) {
-                            carregado[chave] = {
+                            globalWebhooks[chave] = {
                                 url: whs[chave].url || '',
                                 ativo: whs[chave].ativo !== false,
                             };
                         }
                     }
-                    setWebhooks(carregado);
-                    setWebhooksOriginais({ ...carregado });
                 }
 
                 // Monta a lista de chips a partir de settings.canais e migra tokens
@@ -604,8 +588,26 @@ export default function Configuracoes() {
                         }
                     }
                 }
+                // Migra o antigo "canal padrão" (Claro 4) para um chip normal
+                // "claro4", usando o token e os webhooks globais, se ainda não
+                // houver um chip com esse slug. A URL de entrada do Claro 4 já usa
+                // &canal=claro4, então passa a bater com este chip.
+                if (!listaCanais.some((c) => c.slug === 'claro4')) {
+                    listaCanais.unshift({
+                        _id: novoIdCanal(),
+                        slug: 'claro4',
+                        nome: 'Claro 4',
+                        ativo: true,
+                        ferramenta: 'respondechat',
+                        token: globalToken,
+                        tokenConverteChat: '',
+                        webhooks: globalWebhooks,
+                    });
+                }
+
                 setCanais(listaCanais);
                 setCanaisOriginais(JSON.parse(JSON.stringify(listaCanais)));
+                if (listaCanais.length > 0) setTelefoneSelId(listaCanais[0]._id);
 
                 if (settings && typeof settings.asaasApiKey === 'string' && settings.asaasApiKey.length > 10) {
                     setHasExistingAsaasKey(true);
@@ -699,58 +701,7 @@ export default function Configuracoes() {
         setIsSavingAsaas(false);
     };
 
-    // ---- Canal padrão (Claro 4): token + webhooks globais ----
-    const handleSalvarPadrao = async () => {
-        if (!padraoAlterado) return;
-
-        const invalida = (Object.keys(webhooks) as ChaveWebhook[]).find((k) => {
-            const url = webhooks[k].url.trim();
-            return url.length > 0 && !/^https?:\/\//i.test(url);
-        });
-        if (invalida) {
-            addToast(`A URL de "${DEFINICOES.find((d) => d.chave === invalida)!.titulo}" precisa começar com https://`, 'error');
-            return;
-        }
-
-        // Apagar a URL de um webhook ativo o desliga na prática, sem aviso nenhum.
-        const apagada = chavesAlteradas.find(
-            (k) => webhooks[k].ativo && !webhooks[k].url.trim() && webhooksOriginais[k].url.trim()
-        );
-        if (apagada) {
-            const titulo = DEFINICOES.find((d) => d.chave === apagada)!.titulo;
-            if (!window.confirm(`Você apagou a URL de "${titulo}", que está marcado como Ativo. Sem URL, esse evento deixa de ser enviado. Salvar mesmo assim?`)) {
-                return;
-            }
-        }
-
-        setIsSavingWebhooks(true);
-        try {
-            // Objeto webhooks ANINHADO inteiro — setDoc+merge não trata chave
-            // pontilhada como caminho; o estado tem todas as chaves, nada se perde.
-            const webhooksSalvar: Record<ChaveWebhook, ConfigWebhook> = webhooksVazios();
-            for (const chave of Object.keys(webhooks) as ChaveWebhook[]) {
-                webhooksSalvar[chave] = { url: webhooks[chave].url.trim(), ativo: webhooks[chave].ativo };
-            }
-            const payload: Record<string, unknown> = { webhooks: webhooksSalvar };
-            if (rcTokenAlterado) payload.respondechatToken = rcTokenValue.trim();
-            await saveAppSettings(payload);
-
-            const salvos = { ...webhooks };
-            for (const chave of Object.keys(salvos) as ChaveWebhook[]) salvos[chave] = { ...salvos[chave], url: salvos[chave].url.trim() };
-            setWebhooks(salvos);
-            setWebhooksOriginais(salvos);
-            setRcTokenValue(rcTokenValue.trim());
-            setRcTokenOriginal(rcTokenValue.trim());
-
-            addToast('Canal padrão (Claro 4) salvo com sucesso!', 'success');
-        } catch (error) {
-            console.error('Error saving canal padrao:', error);
-            addToast('Erro ao salvar o canal padrão.', 'error');
-        }
-        setIsSavingWebhooks(false);
-    };
-
-    // ---- Chips (telefones não-padrão) ----
+    // ---- Chips (telefones) ----
     const adicionarTelefone = () => {
         const novo: Canal = { _id: novoIdCanal(), slug: '', nome: '', ativo: true, ferramenta: 'respondechat', token: '', tokenConverteChat: '', webhooks: webhooksVazios() };
         setCanais((cs) => [...cs, novo]);
@@ -765,7 +716,10 @@ export default function Configuracoes() {
         const c = canais[index];
         const rotulo = c.nome.trim() || c.slug.trim() || 'este telefone';
         if (!window.confirm(`Remover ${rotulo}? O token e os webhooks dele serão apagados ao salvar.`)) return;
-        if (c._id === telefoneSelId) setTelefoneSelId('padrao');
+        if (c._id === telefoneSelId) {
+            const restantes = canais.filter((_, i) => i !== index);
+            setTelefoneSelId(restantes[0]?._id || '');
+        }
         setCanais((cs) => cs.filter((_, i) => i !== index));
     };
 
@@ -913,9 +867,6 @@ export default function Configuracoes() {
 
                     {/* Seletor de telefone */}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', maxWidth: '600px', marginBottom: 'var(--spacing-md)' }}>
-                        <button type="button" style={pillStyle(telefoneSelId === 'padrao')} onClick={() => setTelefoneSelId('padrao')}>
-                            <Globe size={14} /> Claro 4
-                        </button>
                         {canais.map((c) => (
                             <button key={c._id} type="button" style={pillStyle(telefoneSelId === c._id)} onClick={() => setTelefoneSelId(c._id)}>
                                 <Smartphone size={14} /> {c.nome.trim() || 'Novo telefone'}
@@ -926,92 +877,8 @@ export default function Configuracoes() {
                         </button>
                     </div>
 
-                    {/* Painel do canal padrão (Claro 4) */}
-                    {telefoneSelId === 'padrao' && (
-                        <div className="card" style={{ maxWidth: '600px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
-                                <div style={{
-                                    width: '40px', height: '40px', borderRadius: '50%',
-                                    background: 'var(--bg-card-elevated)', display: 'flex',
-                                    alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', flexShrink: 0,
-                                }}>
-                                    <Globe size={20} />
-                                </div>
-                                <div>
-                                    <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                        Claro 4
-                                    </h3>
-                                    <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                                        Usado quando a mensagem chega sem <code>&amp;canal=</code> na URL de entrada.
-                                    </p>
-                                </div>
-                            </div>
-
-                            {/* Token do canal padrão */}
-                            <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                                <label className="label-section" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-                                    Token do Responde Chat
-                                    {rcTokenValue.trim().length > 0
-                                        ? <span className="badge badge-success" style={{ fontSize: '10px', padding: '1px 6px' }}>configurado</span>
-                                        : <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>sem token</span>}
-                                </label>
-                                <div style={{ position: 'relative' }}>
-                                    <input
-                                        type={showRcTokenVal ? 'text' : 'password'}
-                                        value={rcTokenValue}
-                                        onChange={(e) => setRcTokenValue(e.target.value)}
-                                        placeholder="Cole o token do Responde Chat..."
-                                        disabled={isSavingWebhooks}
-                                        style={{
-                                            width: '100%', padding: '14px', paddingRight: '48px', background: 'var(--bg-input)',
-                                            border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
-                                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
-                                        }}
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowRcTokenVal((s) => !s)}
-                                        style={{
-                                            position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
-                                            background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '4px',
-                                        }}
-                                        title={showRcTokenVal ? 'Ocultar' : 'Mostrar'}
-                                    >
-                                        {showRcTokenVal ? <EyeOff size={16} /> : <Eye size={16} />}
-                                    </button>
-                                </div>
-                            </div>
-
-                            <span className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)', color: 'var(--text-secondary)' }}>
-                                Webhooks deste telefone
-                            </span>
-                            {DEFINICOES.map(({ chave, titulo, descricao, notaVazio }) => (
-                                <CampoWebhook
-                                    key={chave}
-                                    titulo={titulo}
-                                    descricao={descricao}
-                                    notaVazio={notaVazio}
-                                    cfg={webhooks[chave]}
-                                    original={webhooksOriginais[chave]}
-                                    salvando={isSavingWebhooks}
-                                    onChange={(cfg) => setWebhooks((prev) => ({ ...prev, [chave]: cfg }))}
-                                />
-                            ))}
-
-                            <button
-                                onClick={handleSalvarPadrao}
-                                className="btn btn-primary"
-                                disabled={isSavingWebhooks || !padraoAlterado}
-                                style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
-                            >
-                                <Save size={16} />
-                                <span>{isSavingWebhooks ? 'Salvando...' : padraoAlterado ? 'Salvar canal padrão' : 'Nada a salvar'}</span>
-                            </button>
-                        </div>
-                    )}
-
                     {/* Painel de um chip selecionado */}
-                    {telefoneSelId !== 'padrao' && telefoneSel && (
+                    {telefoneSel && (
                         <>
                             <CartaoCanal
                                 canal={telefoneSel}
