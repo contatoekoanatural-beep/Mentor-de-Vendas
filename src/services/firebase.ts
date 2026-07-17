@@ -701,6 +701,8 @@ export const subscribeConversations = (
 // Espelha settings/chipSaude, gravado pela função agendada vigiaSaudeChips.
 export interface ChipSaude {
     nome: string;
+    /** Ferramenta que envia por esse chip; define o nome citado no alerta. */
+    ferramenta?: 'respondechat' | 'convertechat';
     status: 'ok' | 'suspeito';
     enviados: number;
     comResposta: number;

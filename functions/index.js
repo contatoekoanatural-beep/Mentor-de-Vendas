@@ -39,6 +39,20 @@ const POS_REMARKETING_ARQUIVAR_HORAS = 24;
 // excluída se a IA nunca respondeu.
 const FAXINA_DIAS_PARADO = 2;
 
+// Nota interna gravada no histórico quando o remarketing dispara. É a fonte
+// única do texto: quem grava (processarRemarketing) e quem precisa reconhecer a
+// nota depois (o vigia de saúde) apontam para cá. Não é enviada ao cliente como
+// está — o disparo real sai pelo webhook do canal.
+const NOTA_REMARKETING =
+  "[Enviamos uma mensagem de remarketing perguntando se o cliente ainda " +
+  "tem interesse no perfume. A próxima resposta do cliente é uma reação a " +
+  "essa mensagem de remarketing.]";
+
+/** Uma mensagem do histórico é a nota interna de remarketing? */
+function ehNotaRemarketing(msg) {
+  return !!msg && msg.role === "model" && msg.text === NOTA_REMARKETING;
+}
+
 // Vigia de saúde dos chips. O Responde Chat responde 200 "Mensagem enviada"
 // mesmo com o chip fora do ar, então o envio "some" sem erro. O vigia detecta
 // isso pelo comportamento (ver vigiaSaudeChips): janela de análise e nº mínimo
@@ -2009,10 +2023,16 @@ async function analisarSaudeChips() {
   const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
 
   // slug do chip -> nome amigável (ex.: "claro2" -> "Claro 2"). O canal padrão
-  // (conversas sem campo canal) entra como "__padrao__".
+  // (conversas sem campo canal) entra como "__padrao__". Guardamos também a
+  // config completa do chip (ativo, ferramenta) para decidir se vale vigiar e
+  // para dizer no alerta a ferramenta certa (Responde Chat x ConverteChat).
   const nomePorSlug = { [CANAL_PADRAO]: "Padrão" };
+  const cfgPorSlug = {};
   for (const c of Object.values(settingsData.canais || {})) {
-    if (c && c.slug) nomePorSlug[c.slug] = c.nome || c.slug;
+    if (c && c.slug) {
+      nomePorSlug[c.slug] = c.nome || c.slug;
+      cfgPorSlug[c.slug] = c;
+    }
   }
 
   // Só as conversas mexidas na janela importam — evita varrer a base inteira.
@@ -2029,9 +2049,14 @@ async function analisarSaudeChips() {
     const msgs = Array.isArray(data.messages) ? data.messages : [];
     if (msgs.length === 0) continue;
 
+    // O remarketing vai para leads inativos que, por definição, tendem a não
+    // responder — contá-lo como "envio da IA" inflaria o "sem resposta" e faria
+    // o chip parecer fora do ar sem estar. A nota de remarketing é ignorada: só
+    // resposta de conversa real conta como prova (ou não) de entrega.
     let ultimoModelTs = 0;
     for (const m of msgs) {
-      if (m && m.role === "model" && typeof m.ts === "number" &&
+      if (m && m.role === "model" && !ehNotaRemarketing(m) &&
+          typeof m.ts === "number" &&
           m.ts >= inicioJanela && m.ts > ultimoModelTs) {
         ultimoModelTs = m.ts;
       }
@@ -2054,10 +2079,17 @@ async function analisarSaudeChips() {
 
   const canais = {};
   for (const [slug, s] of Object.entries(stats)) {
+    const cfg = cfgPorSlug[slug];
+    // Chip desligado na mão (Configurações) não é vigiado: não enviamos por ele,
+    // então "não está entregando" não faz sentido. Fica de fora do doc de vez.
+    if (cfg && cfg.ativo === false) continue;
     const suspeito = s.enviados >= VIGIA_MIN_ENVIOS && s.comResposta === 0;
     const antes = prev[slug] || {};
     canais[slug] = {
       nome: nomePorSlug[slug] || slug,
+      ferramenta: cfg && cfg.ferramenta === "convertechat"
+        ? "convertechat"
+        : "respondechat",
       status: suspeito ? "suspeito" : "ok",
       enviados: s.enviados,
       comResposta: s.comResposta,
@@ -2234,7 +2266,7 @@ async function processarRemarketing() {
         const msgsRemarket = Array.isArray(data.messages) ? [...data.messages] : [];
         msgsRemarket.push({
           role: "model",
-          text: "[Enviamos uma mensagem de remarketing perguntando se o cliente ainda tem interesse no perfume. A próxima resposta do cliente é uma reação a essa mensagem de remarketing.]",
+          text: NOTA_REMARKETING,
           ts: Date.now(),
         });
 

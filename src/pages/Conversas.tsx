@@ -120,6 +120,7 @@ export default function Conversas() {
     const [chipSaude, setChipSaude] = useState<ChipSaudeDoc | null>(null);
     const [chipNomePorSlug, setChipNomePorSlug] = useState<Record<string, string>>({});
     const [filtroChip, setFiltroChip] = useState<string>('todos');
+    const [soLeadsProntos, setSoLeadsProntos] = useState(false);
     const [limpando, setLimpando] = useState(false);
     const [faxinando, setFaxinando] = useState(false);
 
@@ -171,6 +172,7 @@ export default function Conversas() {
     const cleanSearch = busca.replace(/\D/g, '');
     const filteredConversations = tabConversations.filter(conv => {
         if (filtroChip !== 'todos' && chipSlugDe(conv) !== filtroChip) return false;
+        if (soLeadsProntos && conv.leadPronto !== true) return false;
         if (!cleanSearch) return true;
         const cleanNumero = (conv.numero || '').replace(/\D/g, '');
         return cleanNumero.includes(cleanSearch);
@@ -468,7 +470,7 @@ export default function Conversas() {
                         {chipsSuspeitos.map((c) => (
                             <div key={c.nome} style={{ color: 'var(--text-secondary)', marginTop: 2 }}>
                                 <strong>{c.nome}</strong>: a IA respondeu {c.enviados} cliente{c.enviados !== 1 ? 's' : ''} e nenhum respondeu de volta
-                                {c.desde ? ` (desde ${formatTime(c.desde)})` : ''} — as mensagens podem não estar chegando. Confira a conexão desse número no Responde Chat.
+                                {c.desde ? ` (desde ${formatTime(c.desde)})` : ''} — as mensagens podem não estar chegando. Confira a conexão desse número no {c.ferramenta === 'convertechat' ? 'ConverteChat' : 'Responde Chat'}.
                             </div>
                         ))}
                     </div>
@@ -586,6 +588,25 @@ export default function Conversas() {
                         </div>
                     </div>
 
+                    {/* Filtro rápido: só leads prontos */}
+                    <div style={{ padding: 'var(--space-2) var(--space-4)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                        <button
+                            onClick={() => setSoLeadsProntos((v) => !v)}
+                            title={soLeadsProntos ? 'Mostrar todas as conversas' : 'Mostrar só os leads prontos para fechar'}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                padding: '6px 12px', borderRadius: '16px',
+                                border: soLeadsProntos ? '1px solid #f59e0b' : '1px solid var(--border-color)',
+                                background: soLeadsProntos ? 'rgba(245, 158, 11, 0.14)' : 'transparent',
+                                color: soLeadsProntos ? '#b45309' : 'var(--text-muted)',
+                                fontSize: '0.8125rem', fontWeight: 600,
+                                cursor: 'pointer',
+                            }}
+                        >
+                            🔥 Só leads prontos
+                        </button>
+                    </div>
+
                     {/* Filtro por WhatsApp (só aparece com mais de um chip em uso) */}
                     {mostrarChips && (
                         <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
@@ -643,9 +664,11 @@ export default function Conversas() {
                             <p>
                                 {busca
                                     ? 'Nenhum resultado para a busca.'
-                                    : abaEfetiva === 'ativas'
-                                        ? 'Nenhuma conversa ativa.'
-                                        : 'Nenhuma conversa arquivada.'}
+                                    : soLeadsProntos
+                                        ? 'Nenhum lead pronto no momento.'
+                                        : abaEfetiva === 'ativas'
+                                            ? 'Nenhuma conversa ativa.'
+                                            : 'Nenhuma conversa arquivada.'}
                             </p>
                         </div>
                     ) : (
@@ -712,7 +735,6 @@ export default function Conversas() {
                                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                                         </div>
                                                         <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-                                                            <span>{conv.agenteSlug}</span>
                                                             {mostrarChips && <ChipBadge slug={chipSlugDe(conv)} nome={nomeDoChip(chipSlugDe(conv))} />}
                                                         </div>
                                                     </button>
@@ -749,7 +771,7 @@ export default function Conversas() {
                                                     }}
                                                     title={conv.ativo === true ? 'IA Ligada' : 'IA Desligada'}
                                                 />
-                                                <span className="conversation-item-numero">{conv.numero}</span>
+                                                <span className="conversation-item-numero">{conv.nomeCliente?.trim() || conv.numero}</span>
                                                 {conv.leadPronto === true && (
                                                     <span title="Lead Pronto" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center' }}>🔥</span>
                                                 )}
@@ -760,7 +782,7 @@ export default function Conversas() {
                                             <span className="conversation-item-time">{formatTime(updatedMs)}</span>
                                         </div>
                                         <div className="conversation-item-agent" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-                                            <span>{conv.agenteSlug}</span>
+                                            {conv.nomeCliente?.trim() && <span>{conv.numero}</span>}
                                             {mostrarChips && <ChipBadge slug={chipSlugDe(conv)} nome={nomeDoChip(chipSlugDe(conv))} />}
                                             {conv.leadPronto === true && (
                                                 <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>
@@ -805,7 +827,6 @@ export default function Conversas() {
                                      {selected.nomeCliente?.trim() && (
                                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{selected.numero}</span>
                                      )}
-                                     <span className="conv-chat-header-agent">{selected.agenteSlug}</span>
                                      {mostrarChips && <ChipBadge slug={chipSlugDe(selected)} nome={nomeDoChip(chipSlugDe(selected))} />}
                                      {selected.leadPronto === true && (
                                          <span className="badge badge-warning" style={{ marginLeft: 'var(--space-2)' }}>
