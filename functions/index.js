@@ -853,6 +853,18 @@ async function processarWebhookCanal(provider, request, response) {
 
     const modelosGemini = resolverModelosGemini(settingsSnap.exists ? settingsSnap.data() : null);
 
+    // 9b. Chip desligado na mão (Configurações): a IA NÃO responde neste número.
+    // Serve para pausar um chip (ex.: evitar loop de IA-responde-IA em teste)
+    // sem desconectar nada. Só vale para chip nomeado; o canal padrão não tem
+    // esse liga/desliga por enquanto.
+    if (canal && settingsSnap.exists) {
+      const chipCfg = (settingsSnap.data().canais || {})[canal];
+      if (chipCfg && chipCfg.ativo === false) {
+        logger.info("webhookRespondeChat — chip desativado, ignorando", { canal, numero });
+        return response.status(200).json({ ignored: true, reason: "chip_desativado" });
+      }
+    }
+
     // Reservar timestamp para debounce no início (convRef já validado acima)
     const meuTs = Date.now();
     await convRef.set({ ultimaMensagemTs: meuTs }, { merge: true });

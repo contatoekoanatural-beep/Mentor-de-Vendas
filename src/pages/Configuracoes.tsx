@@ -62,18 +62,26 @@ const DEFINICOES: { chave: ChaveWebhook; titulo: string; descricao: string; nota
 // falha) disparam sempre pela automação do padrão, na caixa errada.
 // ----------------------------------------
 
+type Ferramenta = 'respondechat' | 'convertechat';
+
 interface Canal {
     _id: string;    // id só do cliente, p/ key estável no React — não é persistido
     slug: string;   // casa com ?canal=<slug> na URL de entrada do Responde Chat
     nome: string;   // rótulo amigável (ex.: "Claro 2")
+    ativo: boolean;  // liga/desliga o chip: desligado, a IA não responde nesse número
+    ferramenta: Ferramenta; // qual automação este chip usa (Responde ou Converte)
     token: string;  // token do Responde Chat desta conexão
-    // Token do ConverteChat da MESMA conexão. Ter os dois lado a lado é o que
-    // permite migrar sem apagão: o chip responde pelo provedor cujo webhook
-    // recebeu a mensagem, então dá para testar o CC num número e manter o resto
-    // no RC até confiar.
+    // Token do ConverteChat da MESMA conexão. Mantidos em campos separados no
+    // banco (o backend resolve o envio pelo provedor que recebeu a mensagem);
+    // a tela mostra só o token da ferramenta selecionada.
     tokenConverteChat: string;
     webhooks: Record<ChaveWebhook, ConfigWebhook>;
 }
+
+const FERRAMENTA_LABEL: Record<Ferramenta, string> = {
+    respondechat: 'Responde Chat',
+    convertechat: 'ConverteChat',
+};
 
 let seqCanal = 0;
 const novoIdCanal = () => `canal-${Date.now()}-${seqCanal++}`;
@@ -271,7 +279,22 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
     // Nome/slug começam recolhidos (card limpo, igual ao Claro 4); abrem no lápis.
     // Um telefone novo (sem slug) já nasce com os campos abertos para preencher.
     const [editandoDados, setEditandoDados] = useState(canal.slug.trim() === '');
-    const tokenConfigurado = canal.token.trim().length > 0;
+
+    const ehConverte = canal.ferramenta === 'convertechat';
+    const tokenValue = ehConverte ? canal.tokenConverteChat : canal.token;
+    const setTokenValue = (v: string) =>
+        onChange(ehConverte ? { ...canal, tokenConverteChat: v } : { ...canal, token: v });
+    const tokenConfigurado = tokenValue.trim().length > 0;
+    const ligado = canal.ativo !== false;
+
+    const alternarAtivo = () => {
+        const nome = canal.nome.trim() || canal.slug.trim() || 'este número';
+        const msg = ligado
+            ? `Desativar "${nome}"? A IA para de responder nesse número até você reativar.`
+            : `Ativar "${nome}"? Ele volta a responder mensagens.`;
+        if (!window.confirm(msg)) return;
+        onChange({ ...canal, ativo: !ligado });
+    };
 
     return (
         <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-md)' }}>
@@ -293,6 +316,23 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
                             : 'Defina o nome e o identificador deste número.'}
                     </p>
                 </div>
+                <button
+                    type="button"
+                    onClick={alternarAtivo}
+                    disabled={salvando}
+                    title={ligado ? 'Chip ativo — clique para desativar' : 'Chip desativado — clique para ativar'}
+                    style={{
+                        flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '5px 11px', borderRadius: 999, cursor: salvando ? 'default' : 'pointer',
+                        border: `1px solid ${ligado ? '#16a34a' : 'var(--border-subtle)'}`,
+                        background: ligado ? 'rgba(22, 163, 74, 0.12)' : 'var(--bg-card-elevated)',
+                        color: ligado ? '#16a34a' : 'var(--text-tertiary)',
+                        fontSize: 'var(--text-xs)', fontWeight: 600,
+                    }}
+                >
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: ligado ? '#16a34a' : '#9ca3af' }} />
+                    {ligado ? 'Ativo' : 'Desativado'}
+                </button>
                 <button
                     type="button"
                     className="btn btn-ghost btn-icon"
@@ -354,63 +394,58 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
                 </>
             )}
 
-            <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                <label className="label-section" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-                    Token do Responde Chat
-                    {tokenConfigurado
-                        ? <span className="badge badge-success" style={{ fontSize: '10px', padding: '1px 6px' }}>configurado</span>
-                        : <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>sem token</span>}
-                </label>
-                <div style={{ position: 'relative' }}>
-                    <input
-                        type={showToken ? 'text' : 'password'}
-                        value={canal.token}
-                        onChange={(e) => onChange({ ...canal, token: e.target.value })}
-                        placeholder="Cole o token desta conexão (Copiar token)..."
+            <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--spacing-md)', flexWrap: 'wrap' }}>
+                <div style={{ flex: '0 0 auto', minWidth: '160px' }}>
+                    <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                        Ferramenta
+                    </label>
+                    <select
+                        value={canal.ferramenta}
+                        onChange={(e) => onChange({ ...canal, ferramenta: e.target.value as Ferramenta })}
                         disabled={salvando}
                         style={{
-                            width: '100%', padding: '14px', paddingRight: '48px', background: 'var(--bg-input)',
+                            width: '100%', padding: '14px', background: 'var(--bg-input)',
                             border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
-                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
+                            color: 'var(--text-primary)', fontSize: 'var(--text-sm)', cursor: 'pointer',
                         }}
-                    />
-                    <button
-                        type="button"
-                        onClick={() => setShowToken((s) => !s)}
-                        style={{
-                            position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
-                            background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '4px',
-                        }}
-                        title={showToken ? 'Ocultar' : 'Mostrar'}
                     >
-                        {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
+                        <option value="respondechat">{FERRAMENTA_LABEL.respondechat}</option>
+                        <option value="convertechat">{FERRAMENTA_LABEL.convertechat}</option>
+                    </select>
                 </div>
-            </div>
-
-            <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                <label className="label-section" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-                    Token do ConverteChat
-                    {canal.tokenConverteChat.trim().length > 0
-                        ? <span className="badge badge-success" style={{ fontSize: '10px', padding: '1px 6px' }}>configurado</span>
-                        : <span className="badge" style={{ fontSize: '10px', padding: '1px 6px' }}>opcional</span>}
-                </label>
-                <input
-                    type={showToken ? 'text' : 'password'}
-                    value={canal.tokenConverteChat}
-                    onChange={(e) => onChange({ ...canal, tokenConverteChat: e.target.value })}
-                    placeholder="Cole o token do ConverteChat desta conexão..."
-                    disabled={salvando}
-                    style={{
-                        width: '100%', padding: '14px', background: 'var(--bg-input)',
-                        border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
-                        color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
-                    }}
-                />
-                <p className="text-muted" style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-2)' }}>
-                    Só é usado se a mensagem entrar pelo webhook do ConverteChat. Preencher aqui
-                    não desliga o Responde Chat — dá para rodar os dois em paralelo enquanto testa.
-                </p>
+                <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+                    <label className="label-section" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+                        Token
+                        {tokenConfigurado
+                            ? <span className="badge badge-success" style={{ fontSize: '10px', padding: '1px 6px' }}>configurado</span>
+                            : <span className="badge badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>sem token</span>}
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                        <input
+                            type={showToken ? 'text' : 'password'}
+                            value={tokenValue}
+                            onChange={(e) => setTokenValue(e.target.value)}
+                            placeholder={`Cole o token do ${FERRAMENTA_LABEL[canal.ferramenta]}...`}
+                            disabled={salvando}
+                            style={{
+                                width: '100%', padding: '14px', paddingRight: '48px', background: 'var(--bg-input)',
+                                border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                                color: 'var(--text-primary)', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)',
+                            }}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowToken((s) => !s)}
+                            style={{
+                                position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
+                                background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '4px',
+                            }}
+                            title={showToken ? 'Ocultar' : 'Mostrar'}
+                        >
+                            {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <span className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)', color: 'var(--text-secondary)' }}>
@@ -521,6 +556,7 @@ export default function Configuracoes() {
                 const rawCanais = (settings && settings.canais && typeof settings.canais === 'object')
                     ? settings.canais as Record<string, {
                         nome?: string; token?: string; tokenConverteChat?: string;
+                        ativo?: boolean; ferramenta?: Ferramenta;
                         webhooks?: Partial<Record<ChaveWebhook, { url?: string; ativo?: boolean }>>;
                     }>
                     : {};
@@ -531,12 +567,21 @@ export default function Configuracoes() {
                         const w = c.webhooks?.[chave];
                         if (w) whs[chave] = { url: w.url || '', ativo: w.ativo !== false };
                     }
+                    const tokenRc = typeof c.token === 'string' ? c.token : '';
+                    const tokenCc = typeof c.tokenConverteChat === 'string' ? c.tokenConverteChat : '';
+                    // Ferramenta: usa a salva; senão deduz de qual token está preenchido
+                    // (só CC → convertechat; caso contrário Responde Chat, padrão histórico).
+                    const ferramenta: Ferramenta = c.ferramenta === 'convertechat' || c.ferramenta === 'respondechat'
+                        ? c.ferramenta
+                        : (tokenCc.trim() && !tokenRc.trim() ? 'convertechat' : 'respondechat');
                     listaCanais.push({
                         _id: novoIdCanal(),
                         slug,
                         nome: typeof c.nome === 'string' && c.nome ? c.nome : slug,
-                        token: typeof c.token === 'string' ? c.token : '',
-                        tokenConverteChat: typeof c.tokenConverteChat === 'string' ? c.tokenConverteChat : '',
+                        ativo: c.ativo !== false,
+                        ferramenta,
+                        token: tokenRc,
+                        tokenConverteChat: tokenCc,
                         webhooks: whs,
                     });
                 }
@@ -550,6 +595,8 @@ export default function Configuracoes() {
                                 _id: novoIdCanal(),
                                 slug,
                                 nome: slug === 'claro2' ? 'Claro 2' : slug,
+                                ativo: true,
+                                ferramenta: 'respondechat',
                                 token: tok,
                                 tokenConverteChat: '',
                                 webhooks: webhooksVazios(),
@@ -705,7 +752,7 @@ export default function Configuracoes() {
 
     // ---- Chips (telefones não-padrão) ----
     const adicionarTelefone = () => {
-        const novo: Canal = { _id: novoIdCanal(), slug: '', nome: '', token: '', tokenConverteChat: '', webhooks: webhooksVazios() };
+        const novo: Canal = { _id: novoIdCanal(), slug: '', nome: '', ativo: true, ferramenta: 'respondechat', token: '', tokenConverteChat: '', webhooks: webhooksVazios() };
         setCanais((cs) => [...cs, novo]);
         setTelefoneSelId(novo._id);
     };
@@ -729,12 +776,17 @@ export default function Configuracoes() {
         for (const { chave } of DEFINICOES) {
             webhooks[chave] = { url: c.webhooks[chave].url.trim(), ativo: c.webhooks[chave].ativo };
         }
+        // Uma ferramenta por chip: guarda o token só da selecionada, zera a outra.
+        const ehConverte = c.ferramenta === 'convertechat';
+        const tokenDigitado = (ehConverte ? c.tokenConverteChat : c.token).trim();
         return {
             _id: c._id,
             slug,
             nome: c.nome.trim() || slug,
-            token: c.token.trim(),
-            tokenConverteChat: c.tokenConverteChat.trim(),
+            ativo: c.ativo !== false,
+            ferramenta: c.ferramenta,
+            token: ehConverte ? '' : tokenDigitado,
+            tokenConverteChat: ehConverte ? tokenDigitado : '',
             webhooks,
         };
     };
@@ -775,6 +827,8 @@ export default function Configuracoes() {
                 const norm = chipNormalizado(c);
                 canaisSalvar[norm.slug] = {
                     nome: norm.nome,
+                    ativo: norm.ativo,
+                    ferramenta: norm.ferramenta,
                     token: norm.token,
                     tokenConverteChat: norm.tokenConverteChat,
                     webhooks: norm.webhooks,
