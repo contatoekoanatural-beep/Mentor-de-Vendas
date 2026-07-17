@@ -433,7 +433,7 @@ async function marcarFalhaIA(convRef, motivo, contexto = {}, settingsData = null
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_phone: contexto.numero || "",
-        client_name: "IA FALHOU",
+        ...(contexto.nomeCliente ? { client_name: contexto.nomeCliente } : {}),
       }).toString(),
     });
     const corpoResposta = await responseHook.text();
@@ -1152,7 +1152,7 @@ async function processarWebhookCanal(provider, request, response) {
           },
         }, modelosGemini, { numero, agenteSlug, etapa: "resposta" });
       } catch (errGemini) {
-        await marcarFalhaIA(convRef, errGemini, { numero, agenteSlug, canal },
+        await marcarFalhaIA(convRef, errGemini, { numero, agenteSlug, canal, nomeCliente },
           settingsSnap.exists ? settingsSnap.data() : null);
         return response
           .status(200)
@@ -1216,7 +1216,7 @@ async function processarWebhookCanal(provider, request, response) {
       // humano, e o webhook de lead ainda precisa disparar.
       if (!respostaLimpa && !leadPronto) {
         await marcarFalhaIA(convRef, "Gemini devolveu resposta vazia", {
-          numero, agenteSlug, canal, finishReason: geminiData.candidates?.[0]?.finishReason,
+          numero, agenteSlug, canal, nomeCliente, finishReason: geminiData.candidates?.[0]?.finishReason,
         }, settingsSnap.exists ? settingsSnap.data() : null);
         return response.status(200).json({ error: "respostaVazia", numero });
       }
@@ -1270,7 +1270,7 @@ async function processarWebhookCanal(provider, request, response) {
                 },
                 body: new URLSearchParams({
                   client_phone: numero,
-                  client_name: "Lead Quente",
+                  ...(nomeCliente ? { client_name: nomeCliente } : {}),
                 }).toString(),
               });
               const corpoResposta = await responseHook.text();
@@ -1346,7 +1346,7 @@ async function processarWebhookCanal(provider, request, response) {
         } else if (!valorBoleto || valorBoleto < ASAAS_VALOR_MIN || valorBoleto > ASAAS_VALOR_MAX) {
           await marcarFalhaIA(convRef,
             `boleto sem valor válido no marcador (valor=${valorBoleto})`,
-            { numero, agenteSlug, canal }, settingsData);
+            { numero, agenteSlug, canal, nomeCliente }, settingsData);
         } else {
           try {
             const boleto = await gerarBoletoAsaas({
@@ -1393,7 +1393,7 @@ async function processarWebhookCanal(provider, request, response) {
           } catch (err) {
             await marcarFalhaIA(convRef,
               `falha ao gerar boleto Asaas: ${String(err).slice(0, 300)}`,
-              { numero, agenteSlug, canal }, settingsData);
+              { numero, agenteSlug, canal, nomeCliente }, settingsData);
           }
         }
       }
@@ -1426,7 +1426,9 @@ async function processarWebhookCanal(provider, request, response) {
             },
             body: new URLSearchParams({
               client_phone: numero,
-              client_name: "Lead IA",
+              // Nome REAL do cliente (não um rótulo fixo): senão o fluxo do
+              // ConverteChat regrava o contato para "Lead IA". Sem nome, omite.
+              ...(nomeCliente ? { client_name: nomeCliente } : {}),
             }).toString(),
           });
           const corpoResposta = await responseHook.text();
@@ -2213,7 +2215,7 @@ async function processarRemarketing() {
         },
         body: new URLSearchParams({
           client_phone: numero,
-          client_name: "Lead Remarketing",
+          ...(data.nomeCliente ? { client_name: data.nomeCliente } : {}),
         }).toString(),
       });
 
