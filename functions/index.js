@@ -30,14 +30,10 @@ setGlobalOptions({ maxInstances: 10 });
 
 const RESPONDECHAT_WEBHOOK_LEAD = "https://backend.respondechat.ai/webhook/188/EfEtTZsjXiR6R62esjGD7XWlHlIVwGv1Ru0YES1XOE";
 const REMARKETING_THRESHOLD_HORAS = 22;
-// Quanto tempo a conversa fica em Ativas DEPOIS do remarketing, esperando o
-// cliente reagir. Passado esse prazo sem resposta, ela sai da bancada:
-// arquivada se o cliente já tinha conversado, excluída se nunca escreveu nada.
-const POS_REMARKETING_ARQUIVAR_HORAS = 24;
-// Faxina por TEMPO PARADO (independente de remarketing): passada essa idade sem
-// nenhuma atividade, a conversa sai da bancada — arquivada se a IA respondeu,
-// excluída se a IA nunca respondeu.
-const FAXINA_DIAS_PARADO = 2;
+// Prazo entre o remarketing (que ARQUIVA o lead) e a exclusão do lead morto.
+// Se o cliente não responder dentro dessa janela, o job diário (00:00) exclui a
+// conversa. Se responder antes, o webhook desarquiva e o lead volta pra Ativas.
+const EXCLUSAO_LEAD_MORTO_HORAS = 24;
 
 // Nota interna gravada no histórico quando o remarketing dispara. É a fonte
 // única do texto: quem grava (processarRemarketing) e quem precisa reconhecer a
@@ -1249,6 +1245,18 @@ async function processarWebhookCanal(provider, request, response) {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
+      // Reengajamento: se a conversa tinha recebido remarketing (foi arquivada) e
+      // agora o cliente respondeu, ela VOLTA para Ativas e reinicia o ciclo —
+      // remarketingEnviado zerado deixa o lead elegível a um novo remarketing se
+      // esfriar de novo. Só mexe em quem veio do remarketing (arquivo manual do
+      // vendedor não é desfeito).
+      if (convSnapInicial.exists && convSnapInicial.data().remarketingEnviado === true) {
+        updateData.arquivada = false;
+        updateData.remarketingEnviado = false;
+        updateData.remarketingTs = admin.firestore.FieldValue.delete();
+        logger.info("webhookRespondeChat — lead respondeu ao remarketing, reengajado (volta pra Ativas)", { numero });
+      }
+
       if (leadPronto) {
         updateData.leadPronto = true;
       }
@@ -1929,12 +1937,12 @@ exports.definirSenhaVendedor = onCall(async (request) => {
   return { ok: true, uid: novo.uid };
 });
 
-// rodarFaxinaConversas — dispara a faxina do ciclo de vida SOB DEMANDA (só o
-// dono). Roda apenas a limpeza (arquiva/exclui), SEM disparar remarketing.
-// Serve para limpar o backlog na hora e ver a contagem, sem esperar o agendado.
+// rodarFaxinaConversas — exclui os leads mortos SOB DEMANDA (só o dono), SEM
+// disparar remarketing. Mesma lógica do job diário: limpa o backlog na hora e
+// devolve a contagem, sem esperar as 00:00.
 exports.rodarFaxinaConversas = onCall(async (request) => {
   await exigirDono(request);
-  const resumo = await processarFaxinaCicloVida();
+  const resumo = await processarExclusaoLeadsMortos();
   return { ok: true, ...resumo };
 });
 
@@ -1958,16 +1966,9 @@ exports.verificarRemarketingAgendado = onSchedule(
       });
     }
 
-    // Faxina do ciclo de vida: arquiva engajados sem resposta e exclui leads
-    // mortos, passado o prazo pós-remarketing. Roda logo depois do remarketing.
-    try {
-      const faxina = await processarFaxinaCicloVida();
-      logger.info("verificarRemarketingAgendado — faxina concluida", faxina);
-    } catch (err) {
-      logger.error("verificarRemarketingAgendado — falha na faxina pos-remarketing", {
-        error: String(err),
-      });
-    }
+    // A exclusão dos leads mortos NÃO roda mais aqui — foi para um job próprio,
+    // diário às 00:00 (excluirLeadsMortosDiario). O remarketing só arquiva; a
+    // conversa fica em Arquivados esperando o cliente reagir por 24h.
 
     // Buffers de leads que nunca terminaram o funil nunca são consumidos.
     try {
@@ -1975,6 +1976,30 @@ exports.verificarRemarketingAgendado = onSchedule(
     } catch (err) {
       logger.error("verificarRemarketingAgendado — falha ao limpar buffers", {
         error: String(err),
+      });
+    }
+  }
+);
+
+// ----------------------------------------
+// excluirLeadsMortosDiario — todo dia às 00:00 (America/Sao_Paulo) exclui os
+// leads que receberam remarketing há mais de 24h e não responderam. Mantém a
+// bancada limpa sem depender de exclusão manual.
+// ----------------------------------------
+exports.excluirLeadsMortosDiario = onSchedule(
+  {
+    schedule: "0 0 * * *",
+    timeZone: "America/Sao_Paulo",
+    region: "us-central1",
+  },
+  async (event) => {
+    try {
+      const resumo = await processarExclusaoLeadsMortos();
+      logger.info("excluirLeadsMortosDiario — concluido", resumo);
+    } catch (err) {
+      logger.error("excluirLeadsMortosDiario — excecao", {
+        error: String(err),
+        stack: err.stack,
       });
     }
   }
@@ -2270,14 +2295,18 @@ async function processarRemarketing() {
           ts: Date.now(),
         });
 
-        // NÃO arquiva mais na hora: a conversa fica em Ativas para o vendedor ver
-        // o lead reagir ao remarketing. Esta mensagem reinicia o relógio de
-        // inatividade; quem tira da bancada depois é a faxina por tempo parado
-        // (processarFaxinaCicloVida), se o lead continuar sem responder.
+        // ARQUIVA na hora: o remarketing tira o lead da aba Ativas e o joga em
+        // Arquivados, deixando a bancada limpa (só leads novos/ativos e prontos).
+        // A partir daí, dois caminhos:
+        //   • cliente RESPONDE → o webhook desarquiva e o lead volta pra Ativas
+        //     (ciclo reiniciado, remarketingEnviado zerado);
+        //   • cliente NÃO responde em 24h → excluído no job diário 00:00
+        //     (processarExclusaoLeadsMortos).
         await doc.ref.set({
           messages: msgsRemarket,
           remarketingEnviado: true,
           remarketingTs: Date.now(),
+          arquivada: true,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
 
@@ -2314,32 +2343,31 @@ async function processarRemarketing() {
 }
 
 /**
- * Faxina do ciclo de vida da conversa na bancada, por TEMPO PARADO.
+ * Exclusão dos leads mortos: quem recebeu remarketing e não voltou.
  *
- * Roda de hora em hora (junto do remarketing). Para cada conversa parada há mais
- * de FAXINA_DIAS_PARADO dias (sem nenhuma mensagem nova) que NÃO é lead pronto e
- * NÃO teve o remarketing desligado na mão (remarketingAtivo=false é opt-out
- * explícito do vendedor — não mexe):
- *   • se a IA (Patrícia) chegou a RESPONDER alguma vez → ARQUIVA (teve conversa
- *     real, tem valor);
- *   • se a IA NUNCA respondeu — mesmo que o cliente tenha mandado algo (ex.: só o
- *     "Olá tenho interesse" do anúncio) → EXCLUI de vez (lead que não chegou a
- *     lugar nenhum, sem o que treinar).
+ * O ciclo da bancada é: lead novo fica em Ativas → remarketing dispara e ARQUIVA
+ * → daí em 24h ou o cliente responde (webhook desarquiva e volta pra Ativas) ou
+ * é considerado morto. Esta função roda todo dia às 00:00 e EXCLUI de vez os
+ * mortos, mantendo a bancada limpa sem exigir exclusão manual.
  *
- * Independe do remarketing: como o remarketing pode estar desligado num canal,
- * o gatilho é o tempo sem atividade. Isso também limpa o BACKLOG antigo.
- * "Atividade" = ts da última mensagem (ou criadoEm se não houver). Uma mensagem
- * de remarketing reinicia o relógio, dando ao lead uma nova janela para reagir.
+ * Exclui a conversa quando TODAS forem verdade:
+ *   • recebeu remarketing (remarketingEnviado === true);
+ *   • já passou EXCLUSAO_LEAD_MORTO_HORAS desde o disparo (remarketingTs);
+ *   • o cliente NÃO respondeu depois do remarketing (nenhuma msg 'user' com
+ *     ts > remarketingTs). Isso INDEPENDE de a IA ter respondido ou não.
  *
- * @return {Promise<Object>} Resumo (arquivadas, excluidas, mantidas).
+ * Nunca toca em: venda fechada (leadPronto) nem em quem o vendedor tirou do
+ * automático (remarketingAtivo === false). Quem nunca recebeu remarketing também
+ * não é excluído aqui — o remarketing é o único gatilho de morte.
+ *
+ * @return {Promise<Object>} Resumo (excluidas, mantidas, total).
  */
-async function processarFaxinaCicloVida() {
-  const paradoMs = FAXINA_DIAS_PARADO * 24 * 60 * 60 * 1000;
+async function processarExclusaoLeadsMortos() {
+  const janelaMs = EXCLUSAO_LEAD_MORTO_HORAS * 60 * 60 * 1000;
   const agora = Date.now();
 
   const snap = await admin.firestore().collection("conversations").get();
 
-  let arquivadas = 0;
   let excluidas = 0;
   let mantidas = 0;
   let batch = admin.firestore().batch();
@@ -2355,57 +2383,51 @@ async function processarFaxinaCicloVida() {
   for (const doc of snap.docs) {
     const data = doc.data();
 
-    // Nunca mexe em venda fechada nem em quem o vendedor tirou do automático.
-    if (data.leadPronto === true || data.remarketingAtivo === false) continue;
-
+    // Protegidos: venda fechada e opt-out explícito do vendedor.
+    if (data.leadPronto === true || data.remarketingAtivo === false) {
+      mantidas++;
+      continue;
+    }
+    // Só morre quem recebeu remarketing. Sem remarketing, não é gatilho de morte.
+    if (data.remarketingEnviado !== true) {
+      mantidas++;
+      continue;
+    }
+    // Sem timestamp de remarketing confiável não dá para provar que os 24h
+    // passaram — não arrisca exclusão irreversível: mantém.
+    const remarketingTs = typeof data.remarketingTs === "number" ? data.remarketingTs : 0;
+    if (!remarketingTs) {
+      mantidas++;
+      continue;
+    }
+    // Ainda dentro da janela de 24h: dá tempo do cliente reagir.
+    if ((agora - remarketingTs) < janelaMs) {
+      mantidas++;
+      continue;
+    }
+    // Rede de segurança: se o cliente respondeu depois do remarketing, não é
+    // morto (normalmente o webhook já teria desarquivado e zerado o flag; isto
+    // cobre o caso de a IA estar desligada na hora da resposta).
     const msgs = Array.isArray(data.messages) ? data.messages : [];
-
-    // Última atividade: ts da mensagem mais recente, ou criadoEm.
-    let ultimaAtividade = 0;
-    for (const m of msgs) {
-      if (m && typeof m.ts === "number" && m.ts > ultimaAtividade) ultimaAtividade = m.ts;
-    }
-    if (!ultimaAtividade && typeof data.criadoEm === "number") ultimaAtividade = data.criadoEm;
-
-    // Ainda com atividade recente? Deixa quieto.
-    if (ultimaAtividade && (agora - ultimaAtividade) < paradoMs) {
-      mantidas++;
-      continue;
-    }
-    // Sem data alguma de referência: não arrisca, mantém.
-    if (!ultimaAtividade) {
-      mantidas++;
-      continue;
-    }
-
-    // Parado o suficiente. A IA (Patrícia) chegou a RESPONDER alguma vez?
-    // "Resposta da IA" = mensagem 'model' com texto de verdade — não a nota de
-    // remarketing nem avisos internos do sistema (esses começam com "[").
-    const iaRespondeu = msgs.some(
-      (m) => m && m.role === "model" && typeof m.text === "string" &&
-        m.text.trim() !== "" && !m.text.trim().startsWith("["),
+    const respondeuDepois = remarketingTs > 0 && msgs.some(
+      (m) => m && m.role === "user" && typeof m.ts === "number" && m.ts > remarketingTs,
     );
-    if (iaRespondeu) {
-      // Houve conversa real com a IA → tem valor: arquiva (não exclui).
-      if (data.arquivada !== true) {
-        batch.update(doc.ref, { arquivada: true });
-        ops++;
-        await commitSeCheio(false);
-      }
-      arquivadas++;
-    } else {
-      // A IA nunca respondeu (mesmo que o cliente tenha mandado algo): lead que
-      // não chegou a lugar nenhum. Sem valor → exclui.
-      batch.delete(doc.ref);
-      ops++;
-      await commitSeCheio(false);
-      excluidas++;
+    if (respondeuDepois) {
+      mantidas++;
+      continue;
     }
+
+    // Morto: recebeu remarketing, passou 24h e não respondeu. Exclui (com IA
+    // tendo respondido ou não).
+    batch.delete(doc.ref);
+    ops++;
+    await commitSeCheio(false);
+    excluidas++;
   }
 
   await commitSeCheio(true);
 
-  const resumo = { total: snap.size, arquivadas, excluidas, mantidas };
-  logger.info("processarFaxinaCicloVida — concluido", resumo);
+  const resumo = { total: snap.size, excluidas, mantidas };
+  logger.info("processarExclusaoLeadsMortos — concluido", resumo);
   return resumo;
 }

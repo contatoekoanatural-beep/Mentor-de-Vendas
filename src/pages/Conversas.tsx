@@ -2,7 +2,7 @@
 // Conversas Page - Read-only Conversation Viewer
 // ========================================
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, type CSSProperties } from 'react';
 import { MessageSquare, Power, RotateCcw, ChevronRight, ChevronDown, Search, Archive, Trash2, Bell, AlertTriangle } from 'lucide-react';
 import type { Conversation } from '../types';
 import { Timestamp } from 'firebase/firestore';
@@ -49,6 +49,137 @@ function ChipBadge({ slug, nome }: { slug: string; nome: string }) {
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: cor, flexShrink: 0 }} />
             {nome}
         </span>
+    );
+}
+
+/** Estilo de um item (linha com checkbox) do dropdown de WhatsApp. */
+function estiloItemDropdown(): CSSProperties {
+    return {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        width: '100%',
+        textAlign: 'left',
+        padding: '8px 10px',
+        borderRadius: '6px',
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--text-main)',
+        fontSize: '0.8125rem',
+        cursor: 'pointer',
+    };
+}
+
+/** Estilo da caixinha de check de cada item do dropdown. */
+function estiloCaixaCheck(marcado: boolean): CSSProperties {
+    return {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 16,
+        height: 16,
+        borderRadius: '4px',
+        border: `1px solid ${marcado ? 'var(--primary-color, #2563eb)' : 'var(--border-color)'}`,
+        background: marcado ? 'var(--primary-color, #2563eb)' : 'transparent',
+        color: '#fff',
+        fontSize: '11px',
+        lineHeight: 1,
+        flexShrink: 0,
+    };
+}
+
+/**
+ * Dropdown de filtro por WhatsApp com multiseleção (checkboxes).
+ * Lista vazia de selecionados = "Todos". Fecha ao clicar fora.
+ */
+function FiltroWhatsApp({
+    chips,
+    selecionados,
+    nomeDoChip,
+    onChange,
+}: {
+    chips: string[];
+    selecionados: string[];
+    nomeDoChip: (slug: string) => string;
+    onChange: (novos: string[]) => void;
+}) {
+    const [aberto, setAberto] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+
+    // Fecha ao clicar fora do dropdown.
+    useEffect(() => {
+        if (!aberto) return;
+        const onDocClick = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setAberto(false);
+        };
+        document.addEventListener('mousedown', onDocClick);
+        return () => document.removeEventListener('mousedown', onDocClick);
+    }, [aberto]);
+
+    const resumo =
+        selecionados.length === 0
+            ? 'Todos os WhatsApp'
+            : selecionados.length === 1
+                ? nomeDoChip(selecionados[0])
+                : `${selecionados.length} WhatsApp`;
+
+    const toggle = (slug: string) => {
+        onChange(
+            selecionados.includes(slug)
+                ? selecionados.filter((s) => s !== slug)
+                : [...selecionados, slug]
+        );
+    };
+
+    return (
+        <div ref={ref} style={{ position: 'relative' }}>
+            <button
+                onClick={() => setAberto((v) => !v)}
+                title="Filtrar por WhatsApp (pode marcar mais de um)"
+                style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '7px 12px', borderRadius: '8px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-input, #fff)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.8125rem', fontWeight: 500,
+                    cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+            >
+                <span style={{ color: 'var(--text-muted)' }}>WhatsApp:</span>
+                <span>{resumo}</span>
+                <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+            </button>
+            {aberto && (
+                <div
+                    style={{
+                        position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 30,
+                        minWidth: 220,
+                        background: 'var(--bg-card, #fff)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.18)',
+                        padding: '4px',
+                    }}
+                >
+                    <button onClick={() => onChange([])} style={estiloItemDropdown()}>
+                        <span style={estiloCaixaCheck(selecionados.length === 0)}>
+                            {selecionados.length === 0 ? '✓' : ''}
+                        </span>
+                        Todos os WhatsApp
+                    </button>
+                    {chips.map((slug) => {
+                        const marcado = selecionados.includes(slug);
+                        return (
+                            <button key={slug} onClick={() => toggle(slug)} style={estiloItemDropdown()}>
+                                <span style={estiloCaixaCheck(marcado)}>{marcado ? '✓' : ''}</span>
+                                {nomeDoChip(slug)}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
     );
 }
 
@@ -119,7 +250,9 @@ export default function Conversas() {
     const [abaAtiva, setAbaAtiva] = useState<'ativas' | 'arquivados'>('ativas');
     const [chipSaude, setChipSaude] = useState<ChipSaudeDoc | null>(null);
     const [chipNomePorSlug, setChipNomePorSlug] = useState<Record<string, string>>({});
-    const [filtroChip, setFiltroChip] = useState<string>('todos');
+    // Filtro de WhatsApp: lista de chips selecionados. Vazio = todos os chips.
+    // Permite marcar 1, 2, 3... em vez de só "um" ou "todos".
+    const [filtrosChip, setFiltrosChip] = useState<string[]>([]);
     const [soLeadsProntos, setSoLeadsProntos] = useState(false);
     const [limpando, setLimpando] = useState(false);
     const [faxinando, setFaxinando] = useState(false);
@@ -171,7 +304,7 @@ export default function Conversas() {
     // Filtro de busca local por telefone + filtro por chip (WhatsApp)
     const cleanSearch = busca.replace(/\D/g, '');
     const filteredConversations = tabConversations.filter(conv => {
-        if (filtroChip !== 'todos' && chipSlugDe(conv) !== filtroChip) return false;
+        if (filtrosChip.length > 0 && !filtrosChip.includes(chipSlugDe(conv))) return false;
         if (soLeadsProntos && conv.leadPronto !== true) return false;
         if (!cleanSearch) return true;
         const cleanNumero = (conv.numero || '').replace(/\D/g, '');
@@ -186,14 +319,16 @@ export default function Conversas() {
     );
 
     // Faxina da bancada: arquiva de uma vez todas as conversas ATIVAS do chip
-    // filtrado. Só o dono, e só com um chip específico selecionado.
-    const idsDoChipAtivas = (isOwner && filtroChip !== 'todos')
-        ? conversasVisiveis.filter(c => chipSlugDe(c) === filtroChip && c.arquivada !== true).map(c => c.id)
+    // filtrado. Só o dono, e só com UM chip específico selecionado (a ação é por
+    // chip; com vários marcados não há um alvo único para "arquivar todas de X").
+    const chipUnicoSelecionado = filtrosChip.length === 1 ? filtrosChip[0] : null;
+    const idsDoChipAtivas = (isOwner && chipUnicoSelecionado)
+        ? conversasVisiveis.filter(c => chipSlugDe(c) === chipUnicoSelecionado && c.arquivada !== true).map(c => c.id)
         : [];
 
     const handleLimparBancada = async () => {
-        if (limpando || idsDoChipAtivas.length === 0) return;
-        const nome = nomeDoChip(filtroChip);
+        if (limpando || idsDoChipAtivas.length === 0 || !chipUnicoSelecionado) return;
+        const nome = nomeDoChip(chipUnicoSelecionado);
         if (!window.confirm(
             `Arquivar todas as ${idsDoChipAtivas.length} conversas de "${nome}"?\n\n` +
             `Elas saem da lista ativa, mas continuam existindo — você as vê na aba "Arquivados", ` +
@@ -209,24 +344,25 @@ export default function Conversas() {
         setLimpando(false);
     };
 
-    // Faxina do ciclo de vida sob demanda (só dono): arquiva engajados sem
-    // resposta e exclui leads mortos que já passaram pelo remarketing.
+    // Exclusão de leads mortos sob demanda (só dono): mesma regra do job diário
+    // das 00:00 — exclui quem recebeu remarketing há +24h e não respondeu.
     const handleFaxina = async () => {
         if (faxinando) return;
         if (!window.confirm(
-            'Rodar a faxina de leads mortos agora?\n\n' +
-            'Nas conversas paradas há mais de 2 dias: ARQUIVA as que a IA chegou a ' +
-            'responder (teve conversa real) e EXCLUI as que a IA nunca respondeu ' +
-            '(mesmo que o cliente tenha mandado algo). A exclusão é permanente. ' +
-            'Vendas fechadas e conversas com remarketing desligado não são tocadas.'
+            'Excluir os leads mortos agora?\n\n' +
+            'EXCLUI de vez as conversas que receberam remarketing há mais de 24h e ' +
+            'o cliente não respondeu (com a IA tendo respondido ou não). A exclusão ' +
+            'é permanente. Vendas fechadas (lead pronto) e conversas com remarketing ' +
+            'desligado não são tocadas.\n\n' +
+            'É a mesma limpeza que roda sozinha todo dia às 00:00.'
         )) return;
         setFaxinando(true);
         try {
             const r = await rodarFaxinaConversas();
-            window.alert(`Faxina concluída:\n\n• ${r.excluidas} leads mortos excluídos\n• ${r.arquivadas} arquivados\n• ${r.mantidas} mantidos em ativas`);
+            window.alert(`Limpeza concluída:\n\n• ${r.excluidas} leads mortos excluídos\n• ${r.mantidas} mantidos`);
         } catch (e) {
-            console.error('Erro na faxina:', e);
-            window.alert('Erro ao rodar a faxina. Tente de novo.');
+            console.error('Erro ao excluir leads mortos:', e);
+            window.alert('Erro ao rodar a limpeza. Tente de novo.');
         }
         setFaxinando(false);
     };
@@ -415,11 +551,16 @@ export default function Conversas() {
         <div className="conversations-page">
             {/* Header */}
             <div className="conversations-header">
-                <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
                     <h2 className="conversations-title">Conversas</h2>
-                    <p className="text-muted text-sm">
-                        Acompanhe as conversas dos agentes com os clientes.
-                    </p>
+                    {mostrarChips && (
+                        <FiltroWhatsApp
+                            chips={chipsEmUso}
+                            selecionados={filtrosChip}
+                            nomeDoChip={nomeDoChip}
+                            onChange={setFiltrosChip}
+                        />
+                    )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                     {isOwner && (
@@ -607,41 +748,14 @@ export default function Conversas() {
                         </button>
                     </div>
 
-                    {/* Filtro por WhatsApp (só aparece com mais de um chip em uso) */}
-                    {mostrarChips && (
-                        <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>WhatsApp:</span>
-                            <select
-                                value={filtroChip}
-                                onChange={(e) => setFiltroChip(e.target.value)}
-                                style={{
-                                    flex: 1,
-                                    padding: '6px 10px',
-                                    borderRadius: '6px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'var(--bg-input, #fff)',
-                                    color: 'var(--text-main)',
-                                    fontSize: '0.8125rem',
-                                    cursor: 'pointer',
-                                }}
-                            >
-                                <option value="todos">Todos os WhatsApp</option>
-                                {chipsEmUso.map((slug) => (
-                                    <option key={slug} value={slug}>
-                                        {nomeDoChip(slug)}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
-
-                    {/* Faxina da bancada: arquivar em massa o chip filtrado (só dono) */}
-                    {isOwner && filtroChip !== 'todos' && abaEfetiva === 'ativas' && idsDoChipAtivas.length > 0 && (
+                    {/* Faxina da bancada: arquivar em massa o chip filtrado (só dono,
+                        e só com UM chip marcado) */}
+                    {isOwner && chipUnicoSelecionado && abaEfetiva === 'ativas' && idsDoChipAtivas.length > 0 && (
                         <div style={{ padding: 'var(--space-2) var(--space-4)', borderBottom: '1px solid var(--border-color)' }}>
                             <button
                                 onClick={handleLimparBancada}
                                 disabled={limpando}
-                                title={`Arquiva todas as conversas ativas de ${nomeDoChip(filtroChip)}`}
+                                title={`Arquiva todas as conversas ativas de ${nomeDoChip(chipUnicoSelecionado)}`}
                                 style={{
                                     display: 'flex', alignItems: 'center', gap: 6,
                                     width: '100%', justifyContent: 'center',
@@ -653,7 +767,7 @@ export default function Conversas() {
                                 }}
                             >
                                 <Archive size={15} />
-                                {limpando ? 'Arquivando...' : `Arquivar todas de ${nomeDoChip(filtroChip)} (${idsDoChipAtivas.length})`}
+                                {limpando ? 'Arquivando...' : `Arquivar todas de ${nomeDoChip(chipUnicoSelecionado)} (${idsDoChipAtivas.length})`}
                             </button>
                         </div>
                     )}

@@ -259,12 +259,11 @@ export async function definirSenhaVendedor(uid: string, senha: string): Promise<
 export interface ResumoFaxina {
     ok: boolean;
     total: number;
-    arquivadas: number;
     excluidas: number;
     mantidas: number;
 }
 
-/** Roda a faxina do ciclo de vida (arquiva engajados / exclui leads mortos). Só o dono. */
+/** Exclui os leads mortos (remarketing +24h sem resposta), como o job diário. Só o dono. */
 export async function rodarFaxinaConversas(): Promise<ResumoFaxina> {
     const fn = httpsCallable<undefined, ResumoFaxina>(functions, 'rodarFaxinaConversas');
     const res = await fn();
