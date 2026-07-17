@@ -33,6 +33,20 @@ functions-integrations/    Cloud Functions de integrações (TS)
 
 Firebase usa 2 codebases: `mentor` (functions/) e `integrations` (functions-integrations/).
 
+## Deploy
+
+Projeto Firebase: `mentor-de-vendas-ekoa`. Commitar sempre ANTES de deployar
+(o deploy sai da árvore de trabalho, sem exigir commit — publicar sem commit
+arrisca subir versão errada). Comandos:
+
+- **Functions do mentor** (functions/): `firebase deploy --only functions:mentor`
+  (predeploy roda `eslint .` em functions/).
+- **Functions de integrações** (functions-integrations/): `firebase deploy --only functions:integrations`
+  (predeploy roda `npm run build` — TS).
+- **Frontend** (build Vite → dist/): `npm run build && firebase deploy --only hosting`.
+
+Deploy é ação externa: só rodar com o "ok" explícito do usuário.
+
 ## Funções principais
 
 - **`webhookRespondeChat()`** — núcleo do sistema: recebe mensagem WhatsApp,
