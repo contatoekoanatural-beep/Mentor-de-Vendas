@@ -726,6 +726,10 @@ async function processarWebhookCanal(provider, request, response) {
       return response.status(200).json({ ignored: true, reason: "numero_nao_encontrado" });
     }
 
+    // Nome do contato (o ConverteChat manda em contact.name). Guardado na conversa
+    // para exibir na bancada; opcional (RC pode não mandar).
+    const nomeCliente = String(request.body.contact?.name || "").trim();
+
     logger.info("DIAG_MIDIA_PAYLOAD", {
       numero,
       type: request.body.message?.type,
@@ -1238,6 +1242,10 @@ async function processarWebhookCanal(provider, request, response) {
       if (canal) {
         updateData.canal = canal;
       }
+      // Nome do cliente (quando o provedor manda) — para exibir na bancada.
+      if (nomeCliente) {
+        updateData.nomeCliente = nomeCliente;
+      }
 
       await convRef.set(updateData, { merge: true });
 
@@ -1601,7 +1609,7 @@ exports.webhookConverteChat = onRequest(async (request, response) => {
       query: request.query,
       body: {
         event: "messages.upsert",
-        contact: { number: numero },
+        contact: { number: numero, name: data.contact?.name || "" },
         message: {
           body: texto,
           type: mediaType,

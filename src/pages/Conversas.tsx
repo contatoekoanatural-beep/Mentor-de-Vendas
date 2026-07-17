@@ -698,7 +698,10 @@ export default function Conversas() {
                                                                     }}
                                                                     title={conv.ativo === true ? 'IA Ligada' : 'IA Desligada'}
                                                                 />
-                                                                <span className="conversation-item-numero">{conv.numero}</span>
+                                                                <span className="conversation-item-numero">{conv.nomeCliente?.trim() || conv.numero}</span>
+                                                                {conv.nomeCliente?.trim() && (
+                                                                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{conv.numero}</span>
+                                                                )}
                                                                 {conv.leadPronto === true && (
                                                                     <span title="Lead Pronto" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center' }}>🔥</span>
                                                                 )}
@@ -798,7 +801,10 @@ export default function Conversas() {
                             {/* Chat header */}
                             <div className="conv-chat-header">
                                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                                     <span className="conv-chat-header-numero" style={{ marginRight: 0 }}>{selected.numero}</span>
+                                     <span className="conv-chat-header-numero" style={{ marginRight: 0 }}>{selected.nomeCliente?.trim() || selected.numero}</span>
+                                     {selected.nomeCliente?.trim() && (
+                                         <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{selected.numero}</span>
+                                     )}
                                      <span className="conv-chat-header-agent">{selected.agenteSlug}</span>
                                      {mostrarChips && <ChipBadge slug={chipSlugDe(selected)} nome={nomeDoChip(chipSlugDe(selected))} />}
                                      {selected.leadPronto === true && (

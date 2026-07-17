@@ -558,6 +558,7 @@ export interface Conversation {
     numero: string;
     agenteSlug: string;
     canal?: string; // slug do chip/WhatsApp de origem (ex.: "claro2"); ausente = canal padrão
+    nomeCliente?: string; // nome do contato (quando o provedor manda, ex.: ConverteChat)
     messages: ConversationMessage[];
     ativo?: boolean; // toggle: Patrícia só responde se true
     remarketingAtivo?: boolean; // toggle: se false, esta conversa não recebe remarketing
