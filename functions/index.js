@@ -525,6 +525,14 @@ function vencimentoISO(dias) {
 }
 
 /**
+ * Data de HOJE no fuso de Brasília (UTC-3), formato AAAA-MM-DD.
+ * Helper próprio porque vencimentoISO(0) cairia no padrão de 3 dias (dias || PADRAO).
+ */
+function hojeISOBrasilia() {
+  return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/**
  * Cria cliente + cobrança boleto no Asaas e devolve link e linha digitável.
  * Lança erro em qualquer falha — o chamador decide o fallback (marcar falhaIA).
  */
@@ -1440,6 +1448,15 @@ async function processarWebhookCanal(provider, request, response) {
                 : null;
               const valorPedido = valorBoleto || valorTabela || extraido.valorTotal || null;
 
+              // Vencimento: a data que o cliente pediu, quando pediu. Sem data pedida,
+              // pix e cartão são pagamento na hora — vencem hoje. Boleto fica em branco
+              // aqui (o vencimento real é o do boleto que o Asaas gera em seguida).
+              // Sem acento: o prompt pede "cartao", mas o marcador aceita acento e a IA
+              // às vezes escreve "cartão" — normalizar evita cair fora do caso à toa.
+              const formaSemAcento = (formaPagamento || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+              const dataVencimento = extraido.dataDesejada ||
+                ((formaSemAcento === "pix" || formaSemAcento === "cartao") ? hojeISOBrasilia() : null);
+
               const payloadCrm = {
                 nome: nomeBoleto || nomeCliente || undefined,
                 telefone: numero,
@@ -1448,7 +1465,7 @@ async function processarWebhookCanal(provider, request, response) {
                 ...(extraido.endereco ? { endereco: extraido.endereco } : {}),
                 ...(valorPedido ? { valor_total: valorPedido } : {}),
                 ...(formaPagamento ? { forma_pagamento: formaPagamento } : {}),
-                ...(extraido.dataDesejada ? { data_vencimento: extraido.dataDesejada } : {}),
+                ...(dataVencimento ? { data_vencimento: dataVencimento } : {}),
                 ...(canalNome ? { canal_whatsapp: canalNome } : {}),
                 ...(primeiraMensagem ? { data_lead: new Date(primeiraMensagem.ts).toISOString() } : {}),
               };
