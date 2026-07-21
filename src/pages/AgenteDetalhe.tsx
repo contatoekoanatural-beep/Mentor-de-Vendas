@@ -45,7 +45,8 @@ export default function AgenteDetalhe() {
     const [handoffRule, setHandoffRule] = useState('');
     const [slug, setSlug] = useState('');
     const [debounceSegundos, setDebounceSegundos] = useState(8);
-    const [initialConfigState, setInitialConfigState] = useState({ responseMode: 'single' as 'single' | 'split', maxMessages: 3, tone: '', handoffRule: '', slug: '', debounceSegundos: 8 });
+    const [tabelaPrecos, setTabelaPrecos] = useState<{ quantidade: number; valor: number }[]>([]);
+    const [initialConfigState, setInitialConfigState] = useState({ responseMode: 'single' as 'single' | 'split', maxMessages: 3, tone: '', handoffRule: '', slug: '', debounceSegundos: 8, tabelaPrecos: [] as { quantidade: number; valor: number }[] });
     const [isSavingConfig, setIsSavingConfig] = useState(false);
 
     // Objeções Tab States
@@ -87,13 +88,15 @@ export default function AgenteDetalhe() {
                     const hr = data.handoffRule || '';
                     const sl = data.slug || '';
                     const ds = data.debounceSegundos ?? 8;
+                    const tp = Array.isArray(data.tabelaPrecos) ? data.tabelaPrecos : [];
                     setResponseMode(rm);
                     setMaxMessages(mm);
                     setTone(t);
                     setHandoffRule(hr);
                     setSlug(sl);
                     setDebounceSegundos(ds);
-                    setInitialConfigState({ responseMode: rm, maxMessages: mm, tone: t, handoffRule: hr, slug: sl, debounceSegundos: ds });
+                    setTabelaPrecos(tp);
+                    setInitialConfigState({ responseMode: rm, maxMessages: mm, tone: t, handoffRule: hr, slug: sl, debounceSegundos: ds, tabelaPrecos: tp });
                 }
             } catch (error) {
                 console.error('Error loading agent:', error);
@@ -155,7 +158,8 @@ export default function AgenteDetalhe() {
             tone !== initialConfigState.tone ||
             handoffRule !== initialConfigState.handoffRule ||
             slug !== initialConfigState.slug ||
-            debounceSegundos !== initialConfigState.debounceSegundos
+            debounceSegundos !== initialConfigState.debounceSegundos ||
+            JSON.stringify(tabelaPrecos) !== JSON.stringify(initialConfigState.tabelaPrecos)
         );
     };
 
@@ -289,19 +293,26 @@ export default function AgenteDetalhe() {
         if (!agentId || !agent) return;
         setIsSavingConfig(true);
         try {
+            // Tabela: só faixas válidas (quantidade e valor positivos), ordenadas por quantidade.
+            const tabelaLimpa = tabelaPrecos
+                .filter((f) => Number.isFinite(f.quantidade) && f.quantidade > 0 && Number.isFinite(f.valor) && f.valor > 0)
+                .sort((a, b) => a.quantidade - b.quantidade);
+
             const payload: Partial<Agent> = {
                 responseMode,
                 tone,
                 handoffRule,
                 slug,
                 debounceSegundos,
+                tabelaPrecos: tabelaLimpa,
             };
             if (responseMode === 'split') {
                 payload.maxMessages = maxMessages;
             }
             await updateAgent(agentId, payload);
             setAgent((prev) => prev ? { ...prev, ...payload } : prev);
-            setInitialConfigState({ responseMode, maxMessages, tone, handoffRule, slug, debounceSegundos });
+            setTabelaPrecos(tabelaLimpa);
+            setInitialConfigState({ responseMode, maxMessages, tone, handoffRule, slug, debounceSegundos, tabelaPrecos: tabelaLimpa });
             addToast('Configurações do agente salvas com sucesso!', 'success');
         } catch (error) {
             console.error('Error saving agent config:', error);
@@ -592,6 +603,67 @@ export default function AgenteDetalhe() {
                                 resize: 'vertical',
                             }}
                         />
+                    </div>
+
+                    {/* Bloco 3b: Tabela de preços (quantidade → valor total) */}
+                    <div style={sectionCardStyle}>
+                        <h4 style={sectionTitleStyle}>Tabela de Preços (frascos → valor)</h4>
+                        <p style={sectionDescStyle}>
+                            Quando o lead fica pronto, o valor do pedido no CRM é preenchido a partir desta tabela, usando a quantidade de frascos que o cliente pediu — sem depender do que a IA falou na conversa. Se a quantidade não estiver na tabela, o valor vai em branco e o vendedor completa.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
+                            {tabelaPrecos.map((faixa, idx) => (
+                                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={faixa.quantidade || ''}
+                                        onChange={(e) => {
+                                            const q = parseInt(e.target.value, 10);
+                                            setTabelaPrecos((prev) => prev.map((f, i) => i === idx ? { ...f, quantidade: isNaN(q) ? 0 : q } : f));
+                                        }}
+                                        placeholder="Qtd"
+                                        disabled={isSavingConfig}
+                                        style={{ width: '80px', padding: 'var(--spacing-sm)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)', fontSize: 'var(--text-sm)', textAlign: 'center' }}
+                                    />
+                                    <span className="text-muted text-sm">frasco(s) →</span>
+                                    <span className="text-muted text-sm">R$</span>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step="0.01"
+                                        value={faixa.valor || ''}
+                                        onChange={(e) => {
+                                            const v = parseFloat(e.target.value);
+                                            setTabelaPrecos((prev) => prev.map((f, i) => i === idx ? { ...f, valor: isNaN(v) ? 0 : v } : f));
+                                        }}
+                                        placeholder="0.00"
+                                        disabled={isSavingConfig}
+                                        style={{ width: '110px', padding: 'var(--spacing-sm)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)', fontSize: 'var(--text-sm)' }}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setTabelaPrecos((prev) => prev.filter((_, i) => i !== idx))}
+                                        disabled={isSavingConfig}
+                                        className="btn btn-ghost"
+                                        style={{ padding: 'var(--spacing-sm)', color: 'var(--color-danger, #dc2626)' }}
+                                        title="Remover faixa"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setTabelaPrecos((prev) => [...prev, { quantidade: 0, valor: 0 }])}
+                            disabled={isSavingConfig}
+                            className="btn btn-ghost flex items-center gap-2"
+                            style={{ marginTop: 'var(--spacing-md)' }}
+                        >
+                            <Plus size={16} />
+                            <span>Adicionar faixa</span>
+                        </button>
                     </div>
 
                     {/* Bloco 4: Apelido (slug) */}

@@ -515,6 +515,8 @@ export interface Agent {
     tone?: string;
     handoffRule?: string;
     debounceSegundos?: number;
+    /** Tabela quantidade de frascos → valor total, usada pra preencher o valor no pedido do CRM sem depender do que a IA falou na conversa. */
+    tabelaPrecos?: { quantidade: number; valor: number }[];
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }

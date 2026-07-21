@@ -1430,15 +1430,23 @@ async function processarWebhookCanal(provider, request, response) {
                 ? settingsData.canais[canal].nome
                 : canal;
 
+              // Valor do pedido, por prioridade:
+              // 1) valorBoleto — do marcador, é o que foi de fato cobrado no boleto Asaas;
+              // 2) tabela de preços do agente pela quantidade — fonte registrada, não
+              //    depende da IA falar o preço na conversa (resolve pix/cartão);
+              // 3) valor que a IA mencionou na conversa, se houver.
+              const valorTabela = (extraido.quantidade && Array.isArray(agent.tabelaPrecos))
+                ? (agent.tabelaPrecos.find((f) => Number(f.quantidade) === Number(extraido.quantidade)) || {}).valor
+                : null;
+              const valorPedido = valorBoleto || valorTabela || extraido.valorTotal || null;
+
               const payloadCrm = {
                 nome: nomeBoleto || nomeCliente || undefined,
                 telefone: numero,
                 produto_id: CRM_PRODUTO_ID_LATTIFAH,
                 ...(extraido.quantidade ? { quantidade: extraido.quantidade } : {}),
                 ...(extraido.endereco ? { endereco: extraido.endereco } : {}),
-                // valorBoleto vem do marcador (só obrigatório quando forma=boleto); pra
-                // pix/cartão cai pro valor extraído da conversa, quando a vendedora o disse.
-                ...((valorBoleto || extraido.valorTotal) ? { valor_total: valorBoleto || extraido.valorTotal } : {}),
+                ...(valorPedido ? { valor_total: valorPedido } : {}),
                 ...(formaPagamento ? { forma_pagamento: formaPagamento } : {}),
                 ...(extraido.dataDesejada ? { data_vencimento: extraido.dataDesejada } : {}),
                 ...(canalNome ? { canal_whatsapp: canalNome } : {}),
