@@ -1448,13 +1448,25 @@ async function processarWebhookCanal(provider, request, response) {
                 : null;
               const valorPedido = valorBoleto || valorTabela || extraido.valorTotal || null;
 
-              // Vencimento: a data que o cliente pediu, quando pediu. Sem data pedida,
-              // pix e cartão são pagamento na hora — vencem hoje. Boleto fica em branco
-              // aqui (o vencimento real é o do boleto que o Asaas gera em seguida).
               // Sem acento: o prompt pede "cartao", mas o marcador aceita acento e a IA
               // às vezes escreve "cartão" — normalizar evita cair fora do caso à toa.
               const formaSemAcento = (formaPagamento || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
-              const dataVencimento = extraido.dataDesejada ||
+
+              // Vencimento do pedido, por prioridade:
+              // 1) BOLETO com Asaas ligado — a data que o Asaas vai carimbar no boleto
+              //    gerado logo abaixo (mesma config, mesmo helper). Ganha até da data que
+              //    o cliente pediu, porque hoje o boleto sai com o vencimento padrão de
+              //    qualquer jeito: gravar a data pedida mostraria ao vendedor uma data
+              //    diferente da impressa no boleto que o cliente recebeu. Quando a Frente B
+              //    (não gerar boleto na hora p/ data futura) existir, isso se inverte.
+              // 2) a data que o cliente pediu, quando pediu;
+              // 3) pix e cartão são pagamento na hora — vencem hoje.
+              const asaasCfgVenc = settingsData.asaas || {};
+              const boletoVenceEm =
+                (formaSemAcento === "boleto" && settingsData.asaasApiKey && asaasCfgVenc.ativo !== false)
+                  ? vencimentoISO(asaasCfgVenc.vencimentoDias)
+                  : null;
+              const dataVencimento = boletoVenceEm || extraido.dataDesejada ||
                 ((formaSemAcento === "pix" || formaSemAcento === "cartao") ? hojeISOBrasilia() : null);
 
               const payloadCrm = {
