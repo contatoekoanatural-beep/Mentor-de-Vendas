@@ -29,6 +29,8 @@ mensagem de cliente.
 | `base-patricia-2026-07-10-0024.txt` | Base antiga, 24.491 chars. Crescida por remendos sucessivos: o gate de pagamento aparecia 6× e o parágrafo do `[LEAD_PRONTO]` 4×. |
 | `base-patricia-2026-07-10-0919.txt` | Reescrita completa, 11.889 chars (~50% menos tokens). Sem perda de regra ou fato — só desduplicação. Muda comportamento em três pontos: respostas em 2 mensagens por padrão, frases do PIX/cartão sem "abaixo" (o WhatsApp reordena mensagens de dígitos soltos), e respostas fixas de site/CNPJ com pergunta de avanço adaptada ao dado que falta. |
 | `base-patricia-2026-07-10-1028.txt` | 13.008 chars. Aperta o formato (máx. 2 frases e 200 chars por mensagem, uma dúvida por vez, última mensagem só com a pergunta) e adiciona a trava factual da garantia. Ver abaixo. |
+| `base-patricia-2026-07-21-1507.txt` | 13.419 chars. Estado de produção imediatamente antes da mudança do titular do CNPJ. |
+| `base-patricia-2026-07-21-1512.txt` | 14.166 chars. Adiciona resposta fixa para o cliente que estranha o nome do titular no pagamento (`Mateus Henrique de Oliveira`) + proibição de inventar cargo. Ver abaixo. |
 
 ## Por que a trava factual existe
 
@@ -45,3 +47,16 @@ a maior mensagem de 574 para 189. O modelo respeita o limite de 200 chars em
 
 Descoberta relacionada: a verbosidade veio do **modelo**, não do prompt. Com a
 base antiga, o 3.5-flash já escrevia ~921 chars onde o 2.5-flash escrevia ~725.
+
+## Por que a regra do titular do CNPJ existe
+
+O CNPJ `57.177.822/0001-60` é registrado no nome do titular, Mateus Henrique de
+Oliveira — a Ekoa Natural é a marca. Quem paga por PIX ou boleto vê esse nome no
+recebedor, e o cliente desconfiado estranha. Sem instrução, a Patrícia
+**inventou um cargo** ("nosso diretor financeiro") para explicar, o que piora a
+situação: quem consulta o CNPJ não encontra diretor nenhum, encontra a pessoa
+física. A resposta fixa dá a explicação verdadeira, que é a mesma coisa que o
+cliente vê ao conferir. Vendas já foram perdidas por essa desconfiança.
+
+Quando o registro virar Ekoa Natural, esta regra sai da base — é dado da
+empresa, não do sistema, por isso mora no Firestore e não no código.
