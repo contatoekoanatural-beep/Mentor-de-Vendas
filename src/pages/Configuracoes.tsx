@@ -13,6 +13,11 @@ const ASAAS_URLS: Record<'sandbox' | 'producao', string> = {
 };
 
 // ----------------------------------------
+// CRM — envio direto do pedido (lead pronto)
+// ----------------------------------------
+const CRM_URL_PADRAO = 'https://us-central1-crm-ekoa.cloudfunctions.net/webhookRespondChat';
+
+// ----------------------------------------
 // Webhooks
 // ----------------------------------------
 
@@ -468,7 +473,7 @@ function CartaoCanal({ canal, original, salvando, onChange, onRemover }: PropsCa
 
 export default function Configuracoes() {
     const { addToast } = useToast();
-    const [activeTab, setActiveTab] = useState<'webhooks' | 'ia' | 'asaas'>('webhooks');
+    const [activeTab, setActiveTab] = useState<'webhooks' | 'ia' | 'asaas' | 'crm'>('webhooks');
     const [apiKey, setApiKey] = useState('');
     const [hasExistingKey, setHasExistingKey] = useState(false);
     const [showKey, setShowKey] = useState(false);
@@ -502,6 +507,20 @@ export default function Configuracoes() {
         asaasVencimento !== asaasCfgOriginal.vencimento;
     // Botão único "Salvar tudo": habilita se mudou a config OU se há uma nova chave digitada.
     const asaasAlterado = asaasCfgAlterada || asaasKey.trim().length > 0;
+
+    // CRM: chave (secreta, write-only) + config não-secreta (ativo/URL). Um único
+    // token/URL vale pra todos os telefones — não é configurável por chip.
+    const [crmKey, setCrmKey] = useState('');
+    const [hasExistingCrmKey, setHasExistingCrmKey] = useState(false);
+    const [showCrmKey, setShowCrmKey] = useState(false);
+
+    const [crmAtivo, setCrmAtivo] = useState(true);
+    const [crmApiUrl, setCrmApiUrl] = useState(CRM_URL_PADRAO);
+    const [crmCfgOriginal, setCrmCfgOriginal] = useState<{ ativo: boolean; apiUrl: string }>({ ativo: true, apiUrl: CRM_URL_PADRAO });
+    const [isSavingCrm, setIsSavingCrm] = useState(false);
+
+    const crmCfgAlterada = crmAtivo !== crmCfgOriginal.ativo || crmApiUrl !== crmCfgOriginal.apiUrl;
+    const crmAlterado = crmCfgAlterada || crmKey.trim().length > 0;
 
     const canaisAlterados = JSON.stringify(canais) !== JSON.stringify(canaisOriginais);
 
@@ -628,6 +647,20 @@ export default function Configuracoes() {
                     setAsaasVencimento(cfg.vencimento);
                     setAsaasCfgOriginal(cfg);
                 }
+
+                if (settings && typeof settings.crmApiKey === 'string' && settings.crmApiKey.length > 10) {
+                    setHasExistingCrmKey(true);
+                }
+                if (settings && settings.crm && typeof settings.crm === 'object') {
+                    const c = settings.crm as { ativo?: boolean; apiUrl?: string };
+                    const cfg = {
+                        ativo: c.ativo !== false,
+                        apiUrl: typeof c.apiUrl === 'string' && c.apiUrl ? c.apiUrl : CRM_URL_PADRAO,
+                    };
+                    setCrmAtivo(cfg.ativo);
+                    setCrmApiUrl(cfg.apiUrl);
+                    setCrmCfgOriginal(cfg);
+                }
             } catch (error) {
                 console.error('Error loading settings:', error);
             }
@@ -699,6 +732,40 @@ export default function Configuracoes() {
             addToast('Erro ao salvar o Asaas.', 'error');
         }
         setIsSavingAsaas(false);
+    };
+
+    const handleSaveCrm = async () => {
+        const trimmedKey = crmKey.trim();
+        const trimmedUrl = crmApiUrl.trim() || CRM_URL_PADRAO;
+        if (trimmedKey && trimmedKey.length < 10) {
+            addToast('O token parece inválido (muito curto).', 'error');
+            return;
+        }
+
+        setIsSavingCrm(true);
+        try {
+            const payload: Record<string, unknown> = {
+                crm: {
+                    ativo: crmAtivo,
+                    apiUrl: trimmedUrl,
+                },
+            };
+            if (trimmedKey) payload.crmApiKey = trimmedKey;
+            await saveAppSettings(payload);
+
+            setCrmApiUrl(trimmedUrl);
+            setCrmCfgOriginal({ ativo: crmAtivo, apiUrl: trimmedUrl });
+            if (trimmedKey) {
+                setHasExistingCrmKey(true);
+                setCrmKey('');
+                setShowCrmKey(false);
+            }
+            addToast('CRM salvo com sucesso!', 'success');
+        } catch (error) {
+            console.error('Error saving CRM:', error);
+            addToast('Erro ao salvar o CRM.', 'error');
+        }
+        setIsSavingCrm(false);
     };
 
     // ---- Chips (telefones) ----
@@ -855,6 +922,13 @@ export default function Configuracoes() {
                     onClick={() => setActiveTab('asaas')}
                 >
                     Asaas
+                </button>
+                <button
+                    type="button"
+                    className={`tab ${activeTab === 'crm' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('crm')}
+                >
+                    CRM
                 </button>
             </div>
 
@@ -1183,6 +1257,149 @@ export default function Configuracoes() {
                     >
                         <Save size={16} />
                         <span>{isSavingAsaas ? 'Salvando...' : asaasAlterado ? 'Salvar tudo' : 'Nada a salvar'}</span>
+                    </button>
+                </div>
+            )}
+
+            {/* Aba CRM */}
+            {activeTab === 'crm' && (
+                <div className="card" style={{ maxWidth: '600px', marginTop: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--spacing-lg)' }}>
+                        <div style={{
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '50%',
+                            background: 'var(--bg-card-elevated)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--primary)',
+                        }}>
+                            <FileText size={20} />
+                        </div>
+                        <div>
+                            <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                CRM (pedido direto)
+                            </h3>
+                            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                                Quando o lead fica pronto, cria o pedido direto no CRM com produto, quantidade, endereço e valor. Vale pra todos os telefones — não é por chip.
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Status do token */}
+                    {!isLoading && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'var(--space-2)',
+                            padding: 'var(--space-3) var(--space-4)',
+                            borderRadius: 'var(--radius-md)',
+                            backgroundColor: hasExistingCrmKey ? 'rgba(5, 150, 105, 0.1)' : 'rgba(217, 119, 6, 0.1)',
+                            marginBottom: 'var(--spacing-md)',
+                        }}>
+                            {hasExistingCrmKey ? (
+                                <>
+                                    <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--success)' }}>Token configurado</span>
+                                </>
+                            ) : (
+                                <>
+                                    <AlertTriangle size={16} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--warning)' }}>Nenhum token configurado</span>
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Input do token */}
+                    <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                        <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                            {hasExistingCrmKey ? 'Substituir token' : 'Colar token (Bearer) do CRM'}
+                        </label>
+                        <div style={{ position: 'relative' }}>
+                            <input
+                                type={showCrmKey ? 'text' : 'password'}
+                                value={crmKey}
+                                onChange={(e) => setCrmKey(e.target.value)}
+                                placeholder={hasExistingCrmKey ? 'Cole o novo token para substituir...' : 'Cole o token do webhookRespondChat...'}
+                                disabled={isSavingCrm}
+                                style={{
+                                    width: '100%',
+                                    padding: '14px',
+                                    paddingRight: '48px',
+                                    background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-subtle)',
+                                    borderRadius: 'var(--radius-md)',
+                                    color: 'var(--text-primary)',
+                                    fontSize: 'var(--text-sm)',
+                                    fontFamily: 'var(--font-mono)',
+                                }}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowCrmKey(!showCrmKey)}
+                                style={{
+                                    position: 'absolute',
+                                    right: '12px',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    color: 'var(--text-tertiary)',
+                                    padding: '4px',
+                                }}
+                                title={showCrmKey ? 'Ocultar' : 'Mostrar'}
+                            >
+                                {showCrmKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style={{ borderTop: '1px solid var(--border-subtle)', margin: 'var(--spacing-md) 0' }} />
+
+                    {/* Ligar/desligar o envio */}
+                    <label className="form-checkbox" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--spacing-md)' }}>
+                        <input
+                            type="checkbox"
+                            checked={crmAtivo}
+                            disabled={isSavingCrm}
+                            onChange={(e) => setCrmAtivo(e.target.checked)}
+                        />
+                        <span>Criação automática de pedido ativa</span>
+                    </label>
+
+                    {/* URL do webhook */}
+                    <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                        <label className="label-section" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>URL do webhook</label>
+                        <input
+                            type="text"
+                            value={crmApiUrl}
+                            disabled={isSavingCrm}
+                            onChange={(e) => setCrmApiUrl(e.target.value)}
+                            placeholder={CRM_URL_PADRAO}
+                            style={{
+                                width: '100%',
+                                padding: '12px',
+                                background: 'var(--bg-input)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-md)',
+                                color: 'var(--text-primary)',
+                                fontSize: 'var(--text-sm)',
+                                fontFamily: 'var(--font-mono)',
+                            }}
+                        />
+                    </div>
+
+                    <button
+                        onClick={handleSaveCrm}
+                        className="btn btn-primary"
+                        disabled={isSavingCrm || !crmAlterado}
+                        style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                    >
+                        <Save size={16} />
+                        <span>{isSavingCrm ? 'Salvando...' : crmAlterado ? 'Salvar tudo' : 'Nada a salvar'}</span>
                     </button>
                 </div>
             )}

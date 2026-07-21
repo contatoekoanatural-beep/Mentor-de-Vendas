@@ -469,6 +469,15 @@ const ASAAS_VENCIMENTO_DIAS_PADRAO = 3;
 const ASAAS_VALOR_MIN = 10;
 const ASAAS_VALOR_MAX = 2000;
 
+// ----------------------------------------
+// CRM — pedido direto no lead pronto (produto/quantidade/endereço/valor).
+// Chave, URL e liga/desliga ficam em settings/app (crmApiKey + crm.*), mesmo
+// padrão do Asaas — um único token vale pra todos os telefones, não é por chip.
+// ----------------------------------------
+const CRM_URL_PADRAO = "https://us-central1-crm-ekoa.cloudfunctions.net/webhookRespondChat";
+// Só vendemos Lattifah com a IA por enquanto — ID interno do produto no CRM (não é o do ERP).
+const CRM_PRODUTO_ID_LATTIFAH = "JvQJJtGT0cH3ZzlF9pe6";
+
 // Pagador fictício rotativo: não coletamos CPF real do cliente (regra do prompt).
 const NOMES_BOLETO = [
   "Ana Paula Souza", "Carlos Eduardo Oliveira", "Mariana Costa Lima",
@@ -577,6 +586,84 @@ async function gerarBoletoAsaas({ apiKey, apiUrl, valor, vencimentoDias, numero,
     bankSlipUrl: payData.bankSlipUrl || payData.invoiceUrl || null,
     linhaDigitavel,
   };
+}
+
+// ----------------------------------------
+// CRM — extração estruturada pra montar o pedido (lead pronto)
+// Chamada separada do Gemini, NÃO mexe no prompt principal da Patrícia nem no
+// marcador [LEAD_PRONTO] (forma/valor/nome continuam vindo de lá). Best-effort:
+// falha aqui nunca derruba o fluxo de lead pronto, só manda o pedido mais pobre.
+// ----------------------------------------
+
+/**
+ * Extrai quantidade de frascos, endereço estruturado e (se o cliente pediu
+ * explicitamente) uma data futura de pagamento, a partir do histórico da
+ * conversa. Devolve campos null quando não encontra ou em qualquer erro.
+ */
+async function extrairDadosParaCrm(apiKey, historico, modelos, contexto = {}) {
+  const vazio = { quantidade: null, endereco: null, dataDesejada: null, valorTotal: null };
+  try {
+    const transcricao = (historico || [])
+      .slice(-40)
+      .map((m) => `${m.role === "user" ? "Cliente" : "Vendedora"}: ${m.text}`)
+      .join("\n");
+
+    if (!transcricao.trim()) return vazio;
+
+    const schema = {
+      type: "OBJECT",
+      properties: {
+        quantidade: { type: "INTEGER", nullable: true },
+        endereco: {
+          type: "OBJECT",
+          nullable: true,
+          properties: {
+            cep: { type: "STRING" },
+            rua: { type: "STRING" },
+            numero: { type: "STRING" },
+            bairro: { type: "STRING" },
+            cidade: { type: "STRING" },
+            estado: { type: "STRING" },
+          },
+        },
+        dataDesejada: { type: "STRING", nullable: true },
+        valorTotal: { type: "NUMBER", nullable: true },
+      },
+    };
+
+    const prompt = "Leia a conversa de vendas abaixo e extraia, SE EXISTIREM:\n" +
+      "1. A quantidade de frascos que o cliente vai comprar (número inteiro).\n" +
+      "2. O endereço de entrega, separado em cep/rua/numero/bairro/cidade/estado. O que não tiver, deixe em branco (\"\").\n" +
+      "3. Só se o cliente pediu EXPLICITAMENTE uma data futura específica para pagar/vencer (ex.: \"só posso pagar dia 27\", \"pode ser pro dia 10 do mês que vem\"), essa data no formato AAAA-MM-DD (use o ano atual, salvo se o cliente disser outro). Se o cliente não mencionou nenhuma data específica (combinou pagar \"agora\"/\"hoje\"/\"amanhã\", ou não falou nada sobre isso), deixe null. Não invente nada que não esteja escrito.\n" +
+      "4. O valor TOTAL em reais que a vendedora e o cliente combinaram pra essa compra (ela normalmente diz o preço na conversa, ex.: \"fica R$149,90\"). Número com ponto decimal (ex.: 149.90). Só extraia um valor que tenha sido dito de fato na conversa — nunca calcule ou invente um valor. Se não ficou claro, deixe null.\n\n" +
+      "CONVERSA:\n" + transcricao;
+
+    const data = await chamarGemini(apiKey, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json",
+        responseSchema: schema,
+      },
+    }, modelos, { ...contexto, etapa: "extracaoCrm" });
+
+    const textoResposta = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const parsed = JSON.parse(textoResposta);
+
+    const quantidade = Number.isFinite(parsed.quantidade) && parsed.quantidade > 0 ? parsed.quantidade : null;
+    const endereco = parsed.endereco && typeof parsed.endereco === "object" ? parsed.endereco : null;
+    const dataDesejada = typeof parsed.dataDesejada === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dataDesejada)
+      ? parsed.dataDesejada
+      : null;
+    const valorTotal = Number.isFinite(parsed.valorTotal) && parsed.valorTotal > 0 ? parsed.valorTotal : null;
+
+    return { quantidade, endereco, dataDesejada, valorTotal };
+  } catch (err) {
+    logger.warn("extrairDadosParaCrm — falha na extracao, seguindo sem dados estruturados", {
+      ...contexto, error: String(err).slice(0, 200),
+    });
+    return vazio;
+  }
 }
 
 // ----------------------------------------
@@ -1314,6 +1401,76 @@ async function processarWebhookCanal(provider, request, response) {
           }
         } catch (err) {
           logger.error("Erro ao disparar webhook de lead quente", err);
+        }
+      }
+
+      // 10d. Pedido direto no CRM — em paralelo ao webhook do ConverteChat acima
+      // (que continua etiquetando/movendo o ticket lá). Dedup próprio, então um
+      // dos dois pode estar desligado sem afetar o outro.
+      if (leadPronto) {
+        try {
+          const convSnapCrm = await convRef.get();
+          const crmWebhookEnviado = convSnapCrm.exists ? !!convSnapCrm.data().crmWebhookEnviado : false;
+
+          if (!crmWebhookEnviado) {
+            const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+            const crmCfg = settingsData.crm || {};
+            const crmAtivo = crmCfg.ativo !== false;
+            const crmApiKey = settingsData.crmApiKey;
+            const crmApiUrl = (typeof crmCfg.apiUrl === "string" && crmCfg.apiUrl.trim()) || CRM_URL_PADRAO;
+
+            if (crmAtivo && crmApiKey) {
+              // Extração estruturada best-effort (não mexe no marcador nem no prompt principal).
+              const extraido = await extrairDadosParaCrm(
+                geminiApiKey, historicoAtualizado, modelosGemini, { numero, agenteSlug }
+              );
+
+              const primeiraMensagem = historicoAtualizado.find((m) => typeof m.ts === "number");
+              const canalNome = (canal && settingsData.canais && settingsData.canais[canal] && settingsData.canais[canal].nome)
+                ? settingsData.canais[canal].nome
+                : canal;
+
+              const payloadCrm = {
+                nome: nomeBoleto || nomeCliente || undefined,
+                telefone: numero,
+                produto_id: CRM_PRODUTO_ID_LATTIFAH,
+                ...(extraido.quantidade ? { quantidade: extraido.quantidade } : {}),
+                ...(extraido.endereco ? { endereco: extraido.endereco } : {}),
+                // valorBoleto vem do marcador (só obrigatório quando forma=boleto); pra
+                // pix/cartão cai pro valor extraído da conversa, quando a vendedora o disse.
+                ...((valorBoleto || extraido.valorTotal) ? { valor_total: valorBoleto || extraido.valorTotal } : {}),
+                ...(formaPagamento ? { forma_pagamento: formaPagamento } : {}),
+                ...(extraido.dataDesejada ? { data_vencimento: extraido.dataDesejada } : {}),
+                ...(canalNome ? { canal_whatsapp: canalNome } : {}),
+                ...(primeiraMensagem ? { data_lead: new Date(primeiraMensagem.ts).toISOString() } : {}),
+              };
+
+              logger.info("Disparando pedido direto pro CRM", { numero, url: crmApiUrl });
+              const responseCrm = await fetch(crmApiUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${crmApiKey}`,
+                },
+                body: JSON.stringify(payloadCrm),
+              });
+              const corpoRespostaCrm = await responseCrm.text();
+              logger.info("Resposta do CRM (pedido direto)", {
+                status: responseCrm.status,
+                corpo: corpoRespostaCrm.slice(0, 500),
+              });
+
+              await convRef.set({ crmWebhookEnviado: true }, { merge: true });
+            } else {
+              logger.info("disparo direto pro CRM pulado: inativo ou sem chave", {
+                ativo: crmAtivo, hasKey: !!crmApiKey,
+              });
+            }
+          } else {
+            logger.info("Disparo direto pro CRM pulado por dedup: pedido ja criado nesta conversa", { numero });
+          }
+        } catch (err) {
+          logger.error("Erro ao disparar pedido direto pro CRM", err);
         }
       }
 
