@@ -873,10 +873,10 @@ O marcador carrega a forma de pagamento, quando o cliente vai pagar e, quando a 
 - "forma" é a forma que o cliente escolheu, sem acento: pix, boleto ou cartao.
 - "valor" é o valor TOTAL da compra conforme a tabela de preços, com ponto decimal (ex.: 149.90). OBRIGATÓRIO quando forma=boleto; nas demais formas pode ser omitido.
 - "pagar" diz QUANDO o cliente vai pagar: use "agora" quando ele vai pagar já, hoje ou nos próximos dias; use "depois" APENAS quando ele avisou que só consegue pagar numa data futura específica (ex.: "só recebo dia 5", "pode deixar pro dia 27", "meu salário cai dia 10"). Na dúvida, use "agora".
-- "nome" é o nome completo que o cliente informou, para emitir o boleto no nome dele. OBRIGATÓRIO quando forma=boleto e deve ser SEMPRE o ÚLTIMO atributo do marcador (pode conter espaços). Nas demais formas, omita.
+- "nome" é o nome completo que o cliente informou. OBRIGATÓRIO em TODAS as formas de pagamento — se ele ainda não disse o nome completo, PERGUNTE antes de fechar ("pra eu deixar o seu pedido no sistema, me confirma o seu nome completo?"). Deve ser SEMPRE o ÚLTIMO atributo do marcador (pode conter espaços). Use o nome que o cliente informou, nunca o apelido do WhatsApp.
 - Exemplo boleto agora: [LEAD_PRONTO forma=boleto valor=249.90 pagar=agora nome=João da Silva]
 - Exemplo boleto para data futura: [LEAD_PRONTO forma=boleto valor=149.90 pagar=depois nome=Maria Souza]
-- Exemplo pix: [LEAD_PRONTO forma=pix pagar=agora]
+- Exemplo pix: [LEAD_PRONTO forma=pix pagar=agora nome=Ana Carolina Lima]
 
 Regras rigorosas para a emissão do marcador:
 1. O marcador deve ser escrito exatamente nesse formato (LEAD_PRONTO em maiúsculas, entre colchetes) em uma LINHA TOTALMENTE ISOLADA no final absoluto de toda a sua resposta.
@@ -891,7 +891,7 @@ Exemplo de formato de resposta quando a condição de lead pronto ocorre (boleto
 Perfeito! Vou gerar o seu boleto aqui com o vencimento certinho.
 ---
 Só um minutinho que já te envio por aqui mesmo.
-[LEAD_PRONTO forma=boleto valor=149.90 pagar=agora]
+[LEAD_PRONTO forma=boleto valor=149.90 pagar=agora nome=Carla Ferreira Dias]
 
 Exemplo quando o cliente só vai pagar numa data futura:
 Combinado, Maria! Já deixo o seu pedido reservado aqui no sistema.
@@ -1554,9 +1554,13 @@ async function processarWebhookCanal(provider, request, response) {
       if (canal) {
         updateData.canal = canal;
       }
-      // Nome do cliente (quando o provedor manda) — para exibir na bancada.
-      if (nomeCliente) {
-        updateData.nomeCliente = nomeCliente;
+      // Nome do cliente na bancada. O nome do marcador é o que o PRÓPRIO cliente
+      // informou e vale mais que o apelido do WhatsApp ("Rosi❣️",
+      // "joseauberto2016"): quando existe, assume. Vale também para o client_name
+      // dos webhooks abaixo, que atualiza o contato na ferramenta.
+      const nomeExibicao = nomeBoleto || nomeCliente;
+      if (nomeExibicao) {
+        updateData.nomeCliente = nomeExibicao;
       }
 
       await convRef.set(updateData, { merge: true });
@@ -1582,7 +1586,7 @@ async function processarWebhookCanal(provider, request, response) {
                 },
                 body: new URLSearchParams({
                   client_phone: numero,
-                  ...(nomeCliente ? { client_name: nomeCliente } : {}),
+                  ...(nomeExibicao ? { client_name: nomeExibicao } : {}),
                 }).toString(),
               });
               const corpoResposta = await responseHook.text();

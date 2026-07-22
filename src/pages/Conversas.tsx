@@ -306,14 +306,21 @@ export default function Conversas() {
     ).sort((a, b) => nomeDoChip(a).localeCompare(nomeDoChip(b), 'pt-BR'));
     const mostrarChips = chipsEmUso.length > 1;
 
-    // Filtro de busca local por telefone + filtro por chip (WhatsApp)
-    const cleanSearch = busca.replace(/\D/g, '');
+    // Filtro de busca local por nome OU telefone + filtro por chip (WhatsApp).
+    // Busca por nome ignora acento e caixa: "jose" acha "José".
+    const semAcento = (s: string) =>
+        s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    const buscaTrim = busca.trim();
+    const cleanSearch = buscaTrim.replace(/\D/g, '');
+    const buscaNome = semAcento(buscaTrim);
     const filteredConversations = tabConversations.filter(conv => {
         if (filtrosChip.length > 0 && !filtrosChip.includes(chipSlugDe(conv))) return false;
         if (soLeadsProntos && conv.leadPronto !== true) return false;
-        if (!cleanSearch) return true;
+        if (!buscaTrim) return true;
         const cleanNumero = (conv.numero || '').replace(/\D/g, '');
-        return cleanNumero.includes(cleanSearch);
+        const achouNumero = cleanSearch.length > 0 && cleanNumero.includes(cleanSearch);
+        const achouNome = buscaNome.length > 0 && semAcento(conv.nomeCliente || '').includes(buscaNome);
+        return achouNumero || achouNome;
     });
 
     const pendentes = filteredConversations.filter(
@@ -702,7 +709,7 @@ export default function Conversas() {
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                             <input
                                 type="text"
-                                placeholder="Buscar por número..."
+                                placeholder="Buscar por nome ou número..."
                                 value={busca}
                                 onChange={(e) => setBusca(e.target.value)}
                                 style={{
