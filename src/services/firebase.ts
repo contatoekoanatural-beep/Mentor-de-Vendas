@@ -763,6 +763,11 @@ export const resetConversation = (id: string) =>
         leadPronto: false,
         remarketingEnviado: false,
         falhaIA: false,
+        // As travas de "já disparei" precisam cair junto com a memória: senão a
+        // conversa recomeça do zero, o lead fecha de novo e o pedido NÃO chega
+        // ao CRM — em silêncio, porque o dedup pula sem erro nenhum.
+        leadProntoWebhookEnviado: false,
+        crmWebhookEnviado: false,
         updatedAt: serverTimestamp()
     });
 
