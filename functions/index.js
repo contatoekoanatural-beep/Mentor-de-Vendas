@@ -468,6 +468,10 @@ const ASAAS_URL_PADRAO = "https://api-sandbox.asaas.com/v3"; // troque p/ https:
 const ASAAS_VENCIMENTO_DIAS_PADRAO = 3;
 const ASAAS_VALOR_MIN = 10;
 const ASAAS_VALOR_MAX = 2000;
+// O [LEAD_PRONTO] volta a disparar a cada mensagem depois do fechamento (num caso
+// real: 4x em 34min). Sem uma janela mínima entre ações de boleto, o reenvio vira
+// spam e uma troca de valor viraria cobrança em duplicata.
+const BOLETO_INTERVALO_MS = 5 * 60 * 1000;
 
 // ----------------------------------------
 // CRM — pedido direto no lead pronto (produto/quantidade/endereço/valor).
@@ -533,6 +537,95 @@ function hojeISOBrasilia() {
 }
 
 /**
+ * Linha digitável de um boleto (GET sem body — corpo vazio evita 403).
+ * Best-effort: se falhar, devolve null e o chamador segue só com o link, que
+ * sempre abre.
+ */
+async function buscarLinhaDigitavel(base, apiKey, paymentId, contexto = {}) {
+  try {
+    const idRes = await fetch(`${base}/payments/${paymentId}/identificationField`, {
+      method: "GET",
+      headers: { "access_token": apiKey },
+    });
+    if (!idRes.ok) return null;
+    const idData = await idRes.json().catch(() => ({}));
+    return idData.identificationField || null;
+  } catch (e) {
+    logger.warn("Asaas — linha digitável indisponível, seguindo só com o link", {
+      ...contexto, error: String(e).slice(0, 200),
+    });
+    return null;
+  }
+}
+
+/**
+ * Consulta um boleto já existente no Asaas. Diz se ainda vale (status/vencimento),
+ * por quanto foi emitido e devolve link + linha digitável para reenviar ao cliente.
+ * Lança erro se não conseguir consultar — o chamador decide o fallback.
+ */
+async function consultarBoletoAsaas({ apiKey, apiUrl, paymentId, contexto = {} }) {
+  const base = (apiUrl || ASAAS_URL_PADRAO).replace(/\/+$/, "");
+  const res = await fetch(`${base}/payments/${paymentId}`, {
+    method: "GET",
+    headers: { "access_token": apiKey },
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || !d.id) {
+    throw new Error(`Asaas GET /payments/${paymentId} ${res.status}: ${JSON.stringify(d).slice(0, 200)}`);
+  }
+
+  // Pago (RECEIVED/CONFIRMED) não deve virar boleto novo nem reenvio.
+  const pago = d.status === "RECEIVED" || d.status === "CONFIRMED" ||
+    d.status === "RECEIVED_IN_CASH";
+  // Vencido: o Asaas marca OVERDUE, mas conferimos a data também — o status
+  // pode demorar a virar e um boleto vencido não adianta reenviar.
+  const vencido = d.status === "OVERDUE" ||
+    (typeof d.dueDate === "string" && d.dueDate < hojeISOBrasilia());
+
+  return {
+    paymentId: d.id,
+    status: d.status,
+    dueDate: d.dueDate || null,
+    valor: Number(d.value),
+    pago,
+    vencido,
+    bankSlipUrl: d.bankSlipUrl || d.invoiceUrl || null,
+    linhaDigitavel: await buscarLinhaDigitavel(base, apiKey, d.id, contexto),
+  };
+}
+
+/**
+ * Cancela uma cobrança no Asaas, para o cliente não conseguir pagar um boleto
+ * que foi substituído (valor errado). Best-effort e NUNCA lança: quando é
+ * chamada, o boleto novo já foi emitido, então uma falha aqui não pode derrubar
+ * o envio — vira aviso no log. O Asaas recusa apagar cobrança já paga, o que
+ * protege do caso raro de o cliente pagar entre a consulta e o cancelamento.
+ */
+async function cancelarBoletoAsaas({ apiKey, apiUrl, paymentId, contexto = {} }) {
+  const base = (apiUrl || ASAAS_URL_PADRAO).replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${base}/payments/${paymentId}`, {
+      method: "DELETE",
+      headers: { "access_token": apiKey },
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.deleted !== true) {
+      logger.warn("Asaas — nao foi possivel cancelar o boleto anterior", {
+        ...contexto, paymentId, status: res.status, corpo: JSON.stringify(d).slice(0, 200),
+      });
+      return false;
+    }
+    logger.info("Asaas — boleto anterior cancelado", { ...contexto, paymentId });
+    return true;
+  } catch (e) {
+    logger.warn("Asaas — erro ao cancelar o boleto anterior", {
+      ...contexto, paymentId, error: String(e).slice(0, 200),
+    });
+    return false;
+  }
+}
+
+/**
  * Cria cliente + cobrança boleto no Asaas e devolve link e linha digitável.
  * Lança erro em qualquer falha — o chamador decide o fallback (marcar falhaIA).
  */
@@ -571,23 +664,8 @@ async function gerarBoletoAsaas({ apiKey, apiUrl, valor, vencimentoDias, numero,
     throw new Error(`Asaas /payments ${payRes.status}: ${JSON.stringify(payData).slice(0, 300)}`);
   }
 
-  // 3. Linha digitável (GET sem body — corpo vazio evita 403). Best-effort:
-  //    se falhar, ainda mandamos o link do boleto, que sempre abre.
-  let linhaDigitavel = null;
-  try {
-    const idRes = await fetch(`${base}/payments/${payData.id}/identificationField`, {
-      method: "GET",
-      headers: { "access_token": apiKey },
-    });
-    if (idRes.ok) {
-      const idData = await idRes.json().catch(() => ({}));
-      linhaDigitavel = idData.identificationField || null;
-    }
-  } catch (e) {
-    logger.warn("Asaas — linha digitável indisponível, seguindo só com o link", {
-      numero, agenteSlug, error: String(e).slice(0, 200),
-    });
-  }
+  // 3. Linha digitável — best-effort (ver buscarLinhaDigitavel).
+  const linhaDigitavel = await buscarLinhaDigitavel(base, apiKey, payData.id, { numero, agenteSlug });
 
   return {
     paymentId: payData.id,
@@ -1562,7 +1640,16 @@ async function processarWebhookCanal(provider, request, response) {
         .filter((msg) => msg.length > 0);
 
       // 10c. Boleto automático via Asaas quando o cliente fechou no boleto.
-      // Um boleto por conversa (dedup), valor validado, tudo configurável em settings/app.
+      //
+      // Antes existia UM boleto por conversa, para sempre: se o cliente perdia o
+      // boleto, mudava a quantidade ou o boleto vencia, a IA prometia um novo e o
+      // código pulava calado — o cliente ficava esperando (caso real 22/07).
+      // Agora consultamos o boleto anterior no Asaas e decidimos:
+      //   pago            -> não manda nada (a venda já está paga);
+      //   vencido         -> gera um novo;
+      //   valor mudou     -> gera um novo;
+      //   continua válido -> REENVIA o mesmo link/linha (sem cobrança duplicada).
+      // BOLETO_INTERVALO_MS protege dos disparos repetidos do marcador.
       if (leadPronto && formaPagamento === "boleto") {
         const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
         const asaasApiKey = settingsData.asaasApiKey;
@@ -1570,65 +1657,147 @@ async function processarWebhookCanal(provider, request, response) {
         const asaasAtivo = asaasCfg.ativo !== false;
 
         const convBoletoSnap = await convRef.get();
-        const jaGerou = convBoletoSnap.exists && convBoletoSnap.data().boletoAsaasGerado === true;
+        const dadosConv = convBoletoSnap.exists ? convBoletoSnap.data() : {};
+        const boletoIdAnterior = dadosConv.boletoAsaasGerado === true ? dadosConv.boletoAsaasId : null;
+        const ultimaAcaoTs = dadosConv.boletoAsaasUltimoEnvioTs || dadosConv.boletoAsaasTs || 0;
+        const aindaNaJanela = (Date.now() - ultimaAcaoTs) < BOLETO_INTERVALO_MS;
 
         if (!asaasApiKey || !asaasAtivo) {
           logger.info("boleto Asaas pulado: sem chave ou desativado", {
             numero, temChave: !!asaasApiKey, ativo: asaasAtivo,
           });
-        } else if (jaGerou) {
-          logger.info("boleto Asaas pulado: já gerado nesta conversa (dedup)", { numero });
-        } else if (!valorBoleto || valorBoleto < ASAAS_VALOR_MIN || valorBoleto > ASAAS_VALOR_MAX) {
-          await marcarFalhaIA(convRef,
-            `boleto sem valor válido no marcador (valor=${valorBoleto})`,
-            { numero, agenteSlug, canal, nomeCliente }, settingsData);
+        } else if (aindaNaJanela) {
+          logger.info("boleto Asaas pulado: acao recente nesta conversa (anti-repeticao)", {
+            numero, haMs: Date.now() - ultimaAcaoTs,
+          });
         } else {
-          try {
-            const boleto = await gerarBoletoAsaas({
-              apiKey: asaasApiKey,
-              apiUrl: asaasCfg.apiUrl,
-              valor: valorBoleto,
-              vencimentoDias: asaasCfg.vencimentoDias,
-              nome: nomeBoleto,
-              numero, agenteSlug,
-            });
+          // Decide entre reenviar o que existe e emitir um novo.
+          let acao = "gerar";
+          let existente = null;
+          if (boletoIdAnterior) {
+            try {
+              existente = await consultarBoletoAsaas({
+                apiKey: asaasApiKey,
+                apiUrl: asaasCfg.apiUrl,
+                paymentId: boletoIdAnterior,
+                contexto: { numero, agenteSlug },
+              });
+              const valorMudou = !!valorBoleto && Math.abs(existente.valor - valorBoleto) > 0.005;
+              if (existente.pago) acao = "nada";
+              else if (existente.vencido || valorMudou) acao = "gerar";
+              else acao = "reenviar";
+              logger.info("boleto Asaas — decisao sobre boleto anterior", {
+                numero, paymentId: boletoIdAnterior, status: existente.status,
+                dueDate: existente.dueDate, valorAnterior: existente.valor,
+                valorAgora: valorBoleto, acao,
+              });
+            } catch (err) {
+              // Sem saber o estado do boleto anterior, NÃO emitimos outro às cegas:
+              // o risco é cobrar o cliente duas vezes. Chama o humano.
+              await marcarFalhaIA(convRef,
+                `nao foi possivel consultar o boleto anterior no Asaas: ${String(err).slice(0, 200)}`,
+                { numero, agenteSlug, canal, nomeCliente }, settingsData);
+              acao = "nada";
+            }
+          }
 
-            // Monta as mensagens do boleto. A linha digitável vai SOZINHA numa
-            // mensagem só dela, para o cliente copiar/colar limpo (mesma lógica da chave PIX).
-            const msgsBoleto = [];
-            if (boleto.bankSlipUrl) {
+          const msgsBoleto = [];
+          let novosDados = null;
+
+          if (acao === "reenviar") {
+            if (existente.bankSlipUrl) {
               msgsBoleto.push(
-                `Aqui está o seu boleto, é só acessar pelo link e pagar no app do seu banco ou imprimir:\n${boleto.bankSlipUrl}`
+                `Segue o seu boleto novamente, é só acessar pelo link e pagar no app do seu banco ou imprimir:\n${existente.bankSlipUrl}`
               );
             }
-            if (boleto.linhaDigitavel) {
+            if (existente.linhaDigitavel) {
               msgsBoleto.push("E se preferir copiar e colar, essa é a linha digitável:");
-              msgsBoleto.push(boleto.linhaDigitavel);
+              msgsBoleto.push(existente.linhaDigitavel);
             }
+            if (!msgsBoleto.length) {
+              await marcarFalhaIA(convRef,
+                `boleto anterior sem link para reenviar (paymentId=${boletoIdAnterior})`,
+                { numero, agenteSlug, canal, nomeCliente }, settingsData);
+            } else {
+              novosDados = {};
+              logger.info("boleto Asaas reenviado ao cliente", {
+                numero, agenteSlug, paymentId: boletoIdAnterior,
+              });
+            }
+          } else if (acao === "gerar") {
+            if (!valorBoleto || valorBoleto < ASAAS_VALOR_MIN || valorBoleto > ASAAS_VALOR_MAX) {
+              await marcarFalhaIA(convRef,
+                `boleto sem valor válido no marcador (valor=${valorBoleto})`,
+                { numero, agenteSlug, canal, nomeCliente }, settingsData);
+            } else {
+              try {
+                const boleto = await gerarBoletoAsaas({
+                  apiKey: asaasApiKey,
+                  apiUrl: asaasCfg.apiUrl,
+                  valor: valorBoleto,
+                  vencimentoDias: asaasCfg.vencimentoDias,
+                  nome: nomeBoleto,
+                  numero, agenteSlug,
+                });
 
-            // Envia ao cliente E grava no histórico: sem isso o boleto não aparece
-            // na bancada e a IA não sabe que já mandou (só o dedup impede reenvio).
+                // A linha digitável vai SOZINHA numa mensagem só dela, para o
+                // cliente copiar/colar limpo (mesma lógica da chave PIX).
+                if (boleto.bankSlipUrl) {
+                  msgsBoleto.push(
+                    `Aqui está o seu boleto, é só acessar pelo link e pagar no app do seu banco ou imprimir:\n${boleto.bankSlipUrl}`
+                  );
+                }
+                if (boleto.linhaDigitavel) {
+                  msgsBoleto.push("E se preferir copiar e colar, essa é a linha digitável:");
+                  msgsBoleto.push(boleto.linhaDigitavel);
+                }
+
+                novosDados = {
+                  boletoAsaasGerado: true,
+                  boletoAsaasId: boleto.paymentId,
+                  boletoAsaasValor: valorBoleto,
+                };
+                logger.info("boleto Asaas gerado", {
+                  numero, agenteSlug, paymentId: boleto.paymentId, valor: valorBoleto,
+                  substituiu: boletoIdAnterior || null,
+                });
+
+                // Só agora cancelamos o anterior: se a emissão acima tivesse
+                // falhado, cancelar antes deixaria o cliente sem boleto nenhum.
+                if (boletoIdAnterior) {
+                  await cancelarBoletoAsaas({
+                    apiKey: asaasApiKey,
+                    apiUrl: asaasCfg.apiUrl,
+                    paymentId: boletoIdAnterior,
+                    contexto: { numero, agenteSlug },
+                  });
+                }
+              } catch (err) {
+                await marcarFalhaIA(convRef,
+                  `falha ao gerar boleto Asaas: ${String(err).slice(0, 300)}`,
+                  { numero, agenteSlug, canal, nomeCliente }, settingsData);
+              }
+            }
+          } else {
+            logger.info("boleto Asaas pulado: nada a fazer", {
+              numero, paymentId: boletoIdAnterior, status: existente ? existente.status : null,
+            });
+          }
+
+          // Envia ao cliente E grava no histórico: sem isso o boleto não aparece
+          // na bancada e a IA não sabe que já mandou.
+          if (novosDados && msgsBoleto.length) {
             const tsBoleto = Date.now();
             msgsBoleto.forEach((m, i) => {
               mensagens.push(m);
               historicoAtualizado.push({ role: "model", text: m, ts: tsBoleto + i });
             });
-
             await convRef.set({
               messages: historicoAtualizado,
-              boletoAsaasGerado: true,
-              boletoAsaasId: boleto.paymentId,
-              boletoAsaasValor: valorBoleto,
               boletoAsaasTs: tsBoleto,
+              boletoAsaasUltimoEnvioTs: tsBoleto,
+              ...novosDados,
             }, { merge: true });
-
-            logger.info("boleto Asaas gerado", {
-              numero, agenteSlug, paymentId: boleto.paymentId, valor: valorBoleto,
-            });
-          } catch (err) {
-            await marcarFalhaIA(convRef,
-              `falha ao gerar boleto Asaas: ${String(err).slice(0, 300)}`,
-              { numero, agenteSlug, canal, nomeCliente }, settingsData);
           }
         }
       }
