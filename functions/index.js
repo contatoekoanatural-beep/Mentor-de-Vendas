@@ -639,10 +639,15 @@ async function extrairDadosParaCrm(apiKey, historico, modelos, contexto = {}) {
       },
     };
 
-    const prompt = "Leia a conversa de vendas abaixo e extraia, SE EXISTIREM:\n" +
+    // O modelo não tem relógio: sem dizer a data de hoje, "dia 5" virava um chute
+    // (já produziu 2024-05-05 pra um "dia cinco" em julho/2026).
+    const hoje = hojeISOBrasilia();
+
+    const prompt = `HOJE É ${hoje} (fuso de Brasília). Use SEMPRE esta data como referência para qualquer data relativa.\n\n` +
+      "Leia a conversa de vendas abaixo e extraia, SE EXISTIREM:\n" +
       "1. A quantidade de frascos que o cliente vai comprar (número inteiro).\n" +
       "2. O endereço de entrega, separado em cep/rua/numero/bairro/cidade/estado. O que não tiver, deixe em branco (\"\").\n" +
-      "3. Só se o cliente pediu EXPLICITAMENTE uma data futura específica para pagar/vencer (ex.: \"só posso pagar dia 27\", \"pode ser pro dia 10 do mês que vem\"), essa data no formato AAAA-MM-DD (use o ano atual, salvo se o cliente disser outro). Se o cliente não mencionou nenhuma data específica (combinou pagar \"agora\"/\"hoje\"/\"amanhã\", ou não falou nada sobre isso), deixe null. Não invente nada que não esteja escrito.\n" +
+      "3. Só se o cliente pediu EXPLICITAMENTE uma data futura específica para pagar/vencer (ex.: \"só posso pagar dia 27\", \"pode ser pro dia 10 do mês que vem\"), essa data no formato AAAA-MM-DD. REGRAS DA DATA: ela é SEMPRE no futuro em relação a HOJE; se o cliente disser só o dia (\"dia 5\"), use a PRÓXIMA vez que esse dia acontece a partir de hoje (se já passou neste mês, é no mês seguinte); nunca devolva uma data anterior a HOJE. Se o cliente não mencionou nenhuma data específica (combinou pagar \"agora\"/\"hoje\"/\"amanhã\", ou não falou nada sobre isso), deixe null. Não invente nada que não esteja escrito.\n" +
       "4. O valor TOTAL em reais que a vendedora e o cliente combinaram pra essa compra (ela normalmente diz o preço na conversa, ex.: \"fica R$149,90\"). Número com ponto decimal (ex.: 149.90). Só extraia um valor que tenha sido dito de fato na conversa — nunca calcule ou invente um valor. Se não ficou claro, deixe null.\n\n" +
       "CONVERSA:\n" + transcricao;
 
@@ -660,9 +665,23 @@ async function extrairDadosParaCrm(apiKey, historico, modelos, contexto = {}) {
 
     const quantidade = Number.isFinite(parsed.quantidade) && parsed.quantidade > 0 ? parsed.quantidade : null;
     const endereco = parsed.endereco && typeof parsed.endereco === "object" ? parsed.endereco : null;
-    const dataDesejada = typeof parsed.dataDesejada === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dataDesejada)
+    // Trava de sanidade: mesmo avisado da data de hoje, o modelo erra. Data no
+    // passado viraria pedido "VENCIDO" falso (e, na agenda, cobrança errada);
+    // data absurda no futuro idem. Fora da janela, melhor não mandar nada.
+    let dataDesejada = typeof parsed.dataDesejada === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dataDesejada)
       ? parsed.dataDesejada
       : null;
+    if (dataDesejada) {
+      const limite = new Date(`${hoje}T12:00:00Z`);
+      limite.setUTCFullYear(limite.getUTCFullYear() + 1);
+      const limiteISO = limite.toISOString().slice(0, 10);
+      if (dataDesejada < hoje || dataDesejada > limiteISO) {
+        logger.warn("extrairDadosParaCrm — data extraida fora da janela, descartada", {
+          ...contexto, dataDesejada, hoje, limiteISO,
+        });
+        dataDesejada = null;
+      }
+    }
     const valorTotal = Number.isFinite(parsed.valorTotal) && parsed.valorTotal > 0 ? parsed.valorTotal : null;
 
     return { quantidade, endereco, dataDesejada, valorTotal };
