@@ -536,6 +536,51 @@ function hojeISOBrasilia() {
   return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+// ----------------------------------------
+// CEP — consulta real (ViaCEP), mesma fonte que o CRM já usa
+// ----------------------------------------
+// Endereço NÃO pode ser adivinhado pela IA: ela inventaria rua plausível e o
+// pedido sairia para o lugar errado. Consultamos o CEP de verdade e usamos o
+// resultado tanto para a Patrícia parar de pedir rua/bairro que já conhecemos
+// quanto para completar o pedido no CRM.
+
+/** Primeiro CEP (8 dígitos) encontrado num texto livre, ou null. */
+function extrairCep(texto) {
+  if (!texto) return null;
+  // Aceita "93546220", "93546-220" e também "93.546-220" (ponto de milhar, que
+  // parte o primeiro grupo). As bordas \b impedem casar pedaço de telefone.
+  const m = String(texto).match(/\b(\d{2})\.?(\d{3})[-.\s]?(\d{3})\b/);
+  return m ? `${m[1]}${m[2]}${m[3]}` : null;
+}
+
+/**
+ * Consulta o CEP no ViaCEP. Devolve null se não existir ou se a consulta falhar
+ * (best-effort: nunca derruba o atendimento). CEP "genérico" de cidade volta com
+ * rua e bairro vazios — nesse caso o cliente ainda precisa informar.
+ */
+async function consultarCep(cep) {
+  const limpo = String(cep || "").replace(/\D/g, "");
+  if (limpo.length !== 8) return null;
+  try {
+    const res = await fetch(`https://viacep.com.br/ws/${limpo}/json/`);
+    if (!res.ok) return null;
+    const d = await res.json().catch(() => ({}));
+    if (d.erro === true || d.erro === "true") return null;
+    return {
+      cep: limpo,
+      rua: d.logradouro || "",
+      bairro: d.bairro || "",
+      cidade: d.localidade || "",
+      estado: (d.uf || "").toUpperCase(),
+    };
+  } catch (e) {
+    logger.warn("consultarCep — falha na consulta, seguindo sem o endereço", {
+      cep: limpo, error: String(e).slice(0, 150),
+    });
+    return null;
+  }
+}
+
 /** Hoje por extenso em pt-BR ("terça-feira, 22/07/2026") para o prompt da IA. */
 function hojePorExtensoBrasilia() {
   const brt = new Date(Date.now() - 3 * 60 * 60 * 1000);
@@ -1280,9 +1325,25 @@ async function processarWebhookCanal(provider, request, response) {
     const debounceSeg = agent.debounceSegundos ?? 8;
     const debounceMs = Math.max(0, Math.min(30, debounceSeg)) * 1000;
 
+    // Cliente mandou CEP: resolvemos na hora e anexamos o endereço à mensagem,
+    // no mesmo padrão da leitura de imagem. Sem isso a Patrícia pede rua e bairro
+    // que o próprio CEP já entrega — atrito à toa. CEP genérico (sem logradouro)
+    // não vira nota: aí ela precisa mesmo perguntar.
+    let notaCep = null;
+    const cepDetectado = extrairCep(texto);
+    if (cepDetectado) {
+      const end = await consultarCep(cepDetectado);
+      if (end && end.rua) {
+        notaCep = `[Endereço do CEP ${end.cep}: ${end.rua}, ${end.bairro}, ${end.cidade}/${end.estado}. Confirmado pelos Correios — não peça rua nem bairro, peça apenas o número (e complemento, se houver).]`;
+        logger.info("webhookRespondeChat — CEP resolvido", { numero, cep: end.cep, cidade: end.cidade, uf: end.estado });
+      } else {
+        logger.info("webhookRespondeChat — CEP sem logradouro ou nao encontrado", { numero, cep: cepDetectado });
+      }
+    }
+
     const textoParaHistorico = (!texto)
       ? "[áudio recebido]"
-      : texto;
+      : (notaCep ? `${texto}\n${notaCep}` : texto);
 
     historico.push({ role: "user", text: textoParaHistorico, ts: meuTs });
 
@@ -1605,12 +1666,31 @@ async function processarWebhookCanal(provider, request, response) {
                 ((!pagamentoAdiado && (formaSemAcento === "pix" || formaSemAcento === "cartao"))
                   ? hojeISOBrasilia() : null);
 
+              // Completa o endereço pelo CEP (fonte dos Correios). Só preenche o
+              // que a conversa NÃO trouxe: o que o cliente disse explicitamente
+              // continua valendo (ele pode corrigir um CEP errado falando a rua).
+              // Na prática é o que traz o estado, que quase ninguém escreve.
+              let enderecoFinal = extraido.endereco;
+              if (enderecoFinal && enderecoFinal.cep) {
+                const doCep = await consultarCep(enderecoFinal.cep);
+                if (doCep) {
+                  enderecoFinal = {
+                    ...enderecoFinal,
+                    rua: (enderecoFinal.rua || "").trim() || doCep.rua,
+                    bairro: (enderecoFinal.bairro || "").trim() || doCep.bairro,
+                    cidade: (enderecoFinal.cidade || "").trim() || doCep.cidade,
+                    estado: (enderecoFinal.estado || "").trim() || doCep.estado,
+                  };
+                  logger.info("endereco completado pelo CEP", { numero, cep: doCep.cep, uf: doCep.estado });
+                }
+              }
+
               const payloadCrm = {
                 nome: nomeBoleto || nomeCliente || undefined,
                 telefone: numero,
                 produto_id: CRM_PRODUTO_ID_LATTIFAH,
                 ...(extraido.quantidade ? { quantidade: extraido.quantidade } : {}),
-                ...(extraido.endereco ? { endereco: extraido.endereco } : {}),
+                ...(enderecoFinal ? { endereco: enderecoFinal } : {}),
                 ...(valorPedido ? { valor_total: valorPedido } : {}),
                 ...(formaPagamento ? { forma_pagamento: formaPagamento } : {}),
                 ...(dataVencimento ? { data_vencimento: dataVencimento } : {}),
