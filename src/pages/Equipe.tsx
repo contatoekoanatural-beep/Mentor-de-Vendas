@@ -53,12 +53,16 @@ export default function Equipe() {
             setUsers(lista.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR')));
 
             // Nome amigável dos chips cadastrados em Configurações (se houver).
+            // O slug é a CHAVE do mapa, não um campo de dentro do objeto (é assim
+            // que Configurações grava). Ler c.slug dava sempre undefined e deixava
+            // este mapa vazio: telefone novo não aparecia aqui e os nomes caíam no
+            // slug cru ("claro2" em vez de "Claro 2").
             const rawCanais = (settings?.canais && typeof settings.canais === 'object')
-                ? settings.canais as Record<string, { slug?: string; nome?: string }>
+                ? settings.canais as Record<string, { nome?: string }>
                 : {};
             const nomePorSlug: Record<string, string> = { [CANAL_PADRAO]: 'Padrão' };
-            for (const c of Object.values(rawCanais)) {
-                if (c?.slug) nomePorSlug[c.slug] = c.nome || c.slug;
+            for (const [slug, c] of Object.entries(rawCanais)) {
+                if (slug) nomePorSlug[slug] = c?.nome || slug;
             }
 
             // Opções = chips que aparecem nas conversas (fonte da bancada) +

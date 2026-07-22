@@ -295,10 +295,15 @@ export default function Conversas() {
     const nomeDoChip = (slug: string): string =>
         chipNomePorSlug[slug] || (slug === CANAL_PADRAO ? 'Padrão' : slug);
 
-    // Chips que realmente aparecem nas conversas — alimentam o filtro. O marcador
-    // e o filtro só fazem sentido quando há mais de um WhatsApp em uso.
-    const chipsEmUso = Array.from(new Set(conversasVisiveis.map(chipSlugDe)))
-        .sort((a, b) => nomeDoChip(a).localeCompare(nomeDoChip(b), 'pt-BR'));
+    // Chips do filtro: os que aparecem nas conversas MAIS os cadastrados em
+    // Configurações — senão um telefone recém-criado, ainda sem nenhuma conversa,
+    // fica invisível aqui mesmo existindo no sistema. O vendedor continua vendo
+    // só os que lhe foram liberados (mesma regra de conversasVisiveis).
+    const chipsConfigurados = Object.keys(chipNomePorSlug)
+        .filter((slug) => !restringirPorChip || canaisPermitidos.includes(slug));
+    const chipsEmUso = Array.from(
+        new Set([...conversasVisiveis.map(chipSlugDe), ...chipsConfigurados])
+    ).sort((a, b) => nomeDoChip(a).localeCompare(nomeDoChip(b), 'pt-BR'));
     const mostrarChips = chipsEmUso.length > 1;
 
     // Filtro de busca local por telefone + filtro por chip (WhatsApp)
@@ -396,12 +401,16 @@ export default function Conversas() {
         (async () => {
             try {
                 const settings = await getAppSettings();
+                // O slug é a CHAVE do mapa, não um campo de dentro do objeto (é
+                // assim que Configurações grava). Ler c.slug dava sempre undefined
+                // e deixava este mapa vazio — por isso os chips apareciam como
+                // "claro2" em vez de "Claro 2".
                 const rawCanais = (settings?.canais && typeof settings.canais === 'object')
-                    ? settings.canais as Record<string, { slug?: string; nome?: string }>
+                    ? settings.canais as Record<string, { nome?: string }>
                     : {};
                 const mapa: Record<string, string> = {};
-                for (const c of Object.values(rawCanais)) {
-                    if (c?.slug) mapa[c.slug] = c.nome || c.slug;
+                for (const [slug, c] of Object.entries(rawCanais)) {
+                    if (slug) mapa[slug] = c?.nome || slug;
                 }
                 setChipNomePorSlug(mapa);
             } catch (e) {
