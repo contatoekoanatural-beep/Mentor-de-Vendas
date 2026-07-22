@@ -2173,6 +2173,10 @@ exports.dispararFollowUpCobranca = onRequest(async (request, response) => {
     const valor = Number(corpo.valor);
     const formaPagamento = String(corpo.forma_pagamento || "").trim();
     const pedido = corpo.numero_pedido || null;
+    // Simulação: percorre tudo (acha a conversa, escreve a mensagem) e devolve o
+    // que SERIA enviado, sem mandar nada ao cliente nem gravar no histórico.
+    // É o que permite validar a agenda contra pedidos reais sem incomodar ninguém.
+    const simular = corpo.dry_run === true || corpo.dry_run === "true";
 
     if (!numero) {
       return response.status(200).json({ error: "numero_ausente" });
@@ -2294,6 +2298,16 @@ exports.dispararFollowUpCobranca = onRequest(async (request, response) => {
     // está na grafia que o provedor aceita (país+DDD+número). Mandar a versão do
     // CRM, sem o 55, faria o envio falhar no provedor.
     const numeroEnvio = conv.numero || numero;
+
+    if (simular) {
+      logger.info("followUpCobranca — SIMULACAO (nada enviado)", {
+        numero: numeroEnvio, tipo, pedido, canal, texto,
+      });
+      return response.status(200).json({
+        simulacao: true, enviaria: true, numero: numeroEnvio, canal, tipo, texto,
+      });
+    }
+
     const enviadas = await enviarPeloProvider({
       provider, token, numero: numeroEnvio, mensagens: [texto],
       contexto: { numero: numeroEnvio, tipo, pedido },
