@@ -2192,13 +2192,12 @@ exports.dispararFollowUpCobranca = onRequest(async (request, response) => {
     // (conferido: CRM 19993780831 = Mentor 5519993780831). Buscar só a forma
     // recebida faria todo follow-up morrer em "conversa_nao_encontrada", em
     // silêncio. Por isso tentamos as duas grafias.
+    // Tentamos TODAS as grafias, sem adivinhar qual "55" é país: o DDD 55
+    // (Santa Maria/RS) faz o número da Janete virar 55+55+99628597, e supor que
+    // o "55" inicial era o país removia o DDD dela — a conversa nunca era achada.
     const db = admin.firestore();
-    const variantes = [numero];
-    if (numero.startsWith("55")) {
-      variantes.push(numero.slice(2));
-    } else {
-      variantes.push(`55${numero}`);
-    }
+    const variantes = [numero, `55${numero}`];
+    if (numero.startsWith("55")) variantes.push(numero.slice(2));
 
     let convDoc = null;
     if (corpo.agente) {
