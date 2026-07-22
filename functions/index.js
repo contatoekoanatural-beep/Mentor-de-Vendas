@@ -2183,20 +2183,34 @@ exports.dispararFollowUpCobranca = onRequest(async (request, response) => {
 
     // Localiza a conversa pelo número. O CRM não guarda o agente, então achamos
     // a conversa mais recente desse cliente (na prática, uma só).
+    //
+    // ATENÇÃO AO DDI: o CRM guarda o telefone SEM o "55" e o Mentor COM
+    // (conferido: CRM 19993780831 = Mentor 5519993780831). Buscar só a forma
+    // recebida faria todo follow-up morrer em "conversa_nao_encontrada", em
+    // silêncio. Por isso tentamos as duas grafias.
     const db = admin.firestore();
+    const variantes = [numero];
+    if (numero.startsWith("55")) {
+      variantes.push(numero.slice(2));
+    } else {
+      variantes.push(`55${numero}`);
+    }
+
     let convDoc = null;
     if (corpo.agente) {
-      const direto = await db.collection("conversations").doc(`${numero}_${corpo.agente}`).get();
-      if (direto.exists) convDoc = direto;
+      for (const n of variantes) {
+        const direto = await db.collection("conversations").doc(`${n}_${corpo.agente}`).get();
+        if (direto.exists) { convDoc = direto; break; }
+      }
     }
     if (!convDoc) {
-      const busca = await db.collection("conversations").where("numero", "==", numero).get();
-      const docs = busca.docs.slice().sort((a, b) => {
-        const ta = a.data().ultimaMensagemTs || 0;
-        const tb = b.data().ultimaMensagemTs || 0;
-        return tb - ta;
-      });
-      convDoc = docs[0] || null;
+      const achados = [];
+      for (const n of variantes) {
+        const busca = await db.collection("conversations").where("numero", "==", n).get();
+        achados.push(...busca.docs);
+      }
+      achados.sort((a, b) => (b.data().ultimaMensagemTs || 0) - (a.data().ultimaMensagemTs || 0));
+      convDoc = achados[0] || null;
     }
 
     if (!convDoc) {
@@ -2276,8 +2290,13 @@ exports.dispararFollowUpCobranca = onRequest(async (request, response) => {
         : `Oi! Passando pra lembrar que o seu pagamento${valorTxt ? ` de ${valorTxt}` : ""} vence hoje. Qualquer dúvida, é só me chamar!`;
     }
 
+    // Envia pelo número GRAVADO NA CONVERSA, não pelo que veio do CRM: é ele que
+    // está na grafia que o provedor aceita (país+DDD+número). Mandar a versão do
+    // CRM, sem o 55, faria o envio falhar no provedor.
+    const numeroEnvio = conv.numero || numero;
     const enviadas = await enviarPeloProvider({
-      provider, token, numero, mensagens: [texto], contexto: { numero, tipo, pedido },
+      provider, token, numero: numeroEnvio, mensagens: [texto],
+      contexto: { numero: numeroEnvio, tipo, pedido },
     });
 
     if (enviadas > 0) {
