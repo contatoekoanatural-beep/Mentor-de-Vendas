@@ -1614,6 +1614,9 @@ async function processarWebhookCanal(provider, request, response) {
                 ...(valorPedido ? { valor_total: valorPedido } : {}),
                 ...(formaPagamento ? { forma_pagamento: formaPagamento } : {}),
                 ...(dataVencimento ? { data_vencimento: dataVencimento } : {}),
+                // Marca o pedido que ainda espera emissão do boleto, para a
+                // varredura de cobrança saber quem chamar perto do vencimento.
+                ...(pagamentoAdiado && formaSemAcento === "boleto" ? { boleto_pendente: true } : {}),
                 ...(canalNome ? { canal_whatsapp: canalNome } : {}),
                 ...(primeiraMensagem ? { data_lead: new Date(primeiraMensagem.ts).toISOString() } : {}),
               };
@@ -2083,6 +2086,216 @@ exports.webhookConverteChat = onRequest(async (request, response) => {
       error: String(err),
       stack: err.stack,
     });
+    return response.status(200).json({ error: "excecao", detalhe: String(err) });
+  }
+});
+
+// ----------------------------------------
+// Follow-up de cobrança — o CRM manda, a Patrícia fala
+// ----------------------------------------
+// A agenda de cobrança mora no CRM (é lá que está data_vencimento e o estado do
+// pedido); quem sabe conversar é o Mentor. Então o CRM varre e chama aqui.
+//
+// TIPOS:
+//   "antes_vencimento" — boleto ainda NÃO emitido, vencimento chegando: pergunta
+//     ao cliente se pode gerar. Quando ele confirma, a conversa segue o fluxo
+//     normal e o [LEAD_PRONTO ... pagar=agora] emite o boleto — sem código novo.
+//   "vencimento_hoje"  — qualquer forma de pagamento: lembra do pagamento.
+
+/**
+ * Envia mensagens ao cliente pela API do provedor do chip. Mesma cadência do
+ * miolo do webhook (pausa maior depois de mensagem com link, falha individual
+ * não derruba as demais).
+ */
+async function enviarPeloProvider({ provider, token, numero, mensagens, contexto = {} }) {
+  let enviadas = 0;
+  for (let i = 0; i < mensagens.length; i++) {
+    if (i > 0) {
+      const anteriorTemLink = /https?:\/\//i.test(mensagens[i - 1]);
+      await new Promise((r) => setTimeout(r, anteriorTemLink ? 6000 : 3000));
+    }
+    try {
+      const res = await fetch(provider.sendUrl, {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ number: numero, body: mensagens[i] }),
+      });
+      const corpo = await res.text();
+      if (res.status >= 400) {
+        logger.warn("followUpCobranca — falha no envio", {
+          ...contexto, indice: i, status: res.status, corpo: corpo.slice(0, 200),
+        });
+      } else {
+        enviadas++;
+      }
+    } catch (e) {
+      logger.warn("followUpCobranca — excecao no envio", {
+        ...contexto, indice: i, error: String(e).slice(0, 200),
+      });
+    }
+  }
+  return enviadas;
+}
+
+/** Formata "2026-08-05" como "05/08" para a IA falar naturalmente. */
+function diaMesBR(iso) {
+  if (typeof iso !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+}
+
+// Uma cobrança não pode ser puxada duas vezes no mesmo dia, mesmo que o CRM
+// repita a chamada (retry, rodada manual, flag que não gravou).
+const FOLLOWUP_INTERVALO_MS = 12 * 60 * 60 * 1000;
+
+exports.dispararFollowUpCobranca = onRequest(async (request, response) => {
+  try {
+    if (request.method !== "POST") {
+      return response.status(200).json({ ignored: true, reason: "metodo_nao_permitido" });
+    }
+
+    const settingsSnap = await admin.firestore().doc("settings/app").get();
+    const settingsData = settingsSnap.exists ? settingsSnap.data() : {};
+
+    // Autenticação: o mesmo segredo que o Mentor usa para falar com o CRM serve
+    // para o CRM falar com o Mentor — os dois lados já o conhecem, então não há
+    // credencial nova para cadastrar em lugar nenhum.
+    const esperado = settingsData.crmApiKey;
+    const authHeader = request.headers.authorization || "";
+    if (!esperado || authHeader !== `Bearer ${esperado}`) {
+      logger.warn("followUpCobranca — nao autorizado", { temSegredo: !!esperado });
+      return response.status(401).json({ error: "nao_autorizado" });
+    }
+
+    const corpo = request.body || {};
+    const numero = String(corpo.numero || corpo.telefone || "").replace(/\D/g, "");
+    const tipo = String(corpo.tipo || "").trim();
+    const dataVencimento = typeof corpo.data_vencimento === "string" ? corpo.data_vencimento : null;
+    const valor = Number(corpo.valor);
+    const formaPagamento = String(corpo.forma_pagamento || "").trim();
+    const pedido = corpo.numero_pedido || null;
+
+    if (!numero) {
+      return response.status(200).json({ error: "numero_ausente" });
+    }
+    if (tipo !== "antes_vencimento" && tipo !== "vencimento_hoje") {
+      return response.status(200).json({ error: "tipo_invalido", tipo });
+    }
+
+    // Localiza a conversa pelo número. O CRM não guarda o agente, então achamos
+    // a conversa mais recente desse cliente (na prática, uma só).
+    const db = admin.firestore();
+    let convDoc = null;
+    if (corpo.agente) {
+      const direto = await db.collection("conversations").doc(`${numero}_${corpo.agente}`).get();
+      if (direto.exists) convDoc = direto;
+    }
+    if (!convDoc) {
+      const busca = await db.collection("conversations").where("numero", "==", numero).get();
+      const docs = busca.docs.slice().sort((a, b) => {
+        const ta = a.data().ultimaMensagemTs || 0;
+        const tb = b.data().ultimaMensagemTs || 0;
+        return tb - ta;
+      });
+      convDoc = docs[0] || null;
+    }
+
+    if (!convDoc) {
+      logger.warn("followUpCobranca — conversa nao encontrada", { numero, pedido });
+      return response.status(200).json({ error: "conversa_nao_encontrada", numero });
+    }
+
+    const conv = convDoc.data();
+    const convRef = convDoc.ref;
+
+    // Vendedor assumiu (IA desligada) ou conversa reiniciada: não falamos por
+    // cima de um humano que está conduzindo.
+    if (conv.ativo !== true) {
+      logger.info("followUpCobranca — pulado: IA desligada nesta conversa", { numero, pedido });
+      return response.status(200).json({ ignored: true, reason: "ia_desligada", numero });
+    }
+
+    const ultimoFollowUp = typeof conv.followUpCobrancaTs === "number" ? conv.followUpCobrancaTs : 0;
+    if (Date.now() - ultimoFollowUp < FOLLOWUP_INTERVALO_MS) {
+      logger.info("followUpCobranca — pulado: follow-up recente nesta conversa", {
+        numero, pedido, haMs: Date.now() - ultimoFollowUp,
+      });
+      return response.status(200).json({ ignored: true, reason: "follow_up_recente", numero });
+    }
+
+    const canal = conv.canal || null;
+    const chipCfg = canal && settingsData.canais ? settingsData.canais[canal] : null;
+    if (chipCfg && chipCfg.ativo === false) {
+      logger.info("followUpCobranca — pulado: chip desativado", { numero, canal });
+      return response.status(200).json({ ignored: true, reason: "chip_desativado", canal });
+    }
+    const provider = PROVIDERS[(chipCfg && chipCfg.ferramenta) || "respondechat"] || PROVIDERS.respondechat;
+    const token = resolverTokenCanal(provider, settingsData, canal);
+    if (!token) {
+      logger.warn("followUpCobranca — sem token para o chip", { numero, canal });
+      return response.status(200).json({ error: "sem_token", canal });
+    }
+
+    // Mensagem escrita pela própria Patrícia, com o histórico como contexto —
+    // retomar uma conversa de dias atrás com texto genérico soaria robótico.
+    const historico = Array.isArray(conv.messages) ? conv.messages : [];
+    const transcricao = historico.slice(-20)
+      .map((m) => `${m.role === "user" ? "Cliente" : "Você"}: ${m.text}`).join("\n");
+    const quando = diaMesBR(dataVencimento);
+    const valorTxt = Number.isFinite(valor) && valor > 0
+      ? `R$ ${valor.toFixed(2).replace(".", ",")}` : null;
+
+    const objetivo = tipo === "antes_vencimento"
+      ? `Retome a conversa lembrando com naturalidade do combinado e PERGUNTE se pode gerar o boleto agora${quando ? ` para vencer no dia ${quando}` : ""}. Não escreva boleto, link nem código de barras — só pergunte se pode gerar.`
+      : `A cobrança do cliente vence HOJE${valorTxt ? ` (${valorTxt})` : ""}. Escreva um lembrete cordial e leve do pagamento, se colocando à disposição para ajudar. Não cobre de forma dura nem ameace.`;
+
+    const instrucao = `Você é a vendedora desta conversa de WhatsApp. Escreva a PRÓXIMA mensagem para o cliente.\n\n` +
+      `OBJETIVO: ${objetivo}\n\n` +
+      `REGRAS: seja breve (no máximo 2 frases curtas), calorosa e natural, no mesmo tom que você já usou na conversa. Trate o cliente pelo nome se ele aparecer no histórico. Não repita saudação de primeira conversa (vocês já se falaram). Responda APENAS com o texto da mensagem, sem aspas e sem comentários.\n\n` +
+      `CONVERSA ATÉ AQUI:\n${transcricao}`;
+
+    const geminiApiKey = settingsData.geminiApiKey;
+    const modelos = resolverModelosGemini(settingsData);
+    let texto = null;
+    if (geminiApiKey) {
+      try {
+        const data = await chamarGemini(geminiApiKey, {
+          contents: [{ parts: [{ text: instrucao }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 300, thinkingConfig: { thinkingBudget: 0 } },
+        }, modelos, { numero, etapa: "followUpCobranca" });
+        texto = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim() || null;
+      } catch (e) {
+        logger.warn("followUpCobranca — Gemini falhou, usando texto de reserva", {
+          numero, error: String(e).slice(0, 200),
+        });
+      }
+    }
+    // Reserva: melhor uma mensagem simples do que o cliente não ser avisado.
+    if (!texto) {
+      texto = tipo === "antes_vencimento"
+        ? `Oi! Passando pra lembrar do seu pedido${quando ? ` com pagamento combinado pro dia ${quando}` : ""}. Posso gerar o seu boleto agora?`
+        : `Oi! Passando pra lembrar que o seu pagamento${valorTxt ? ` de ${valorTxt}` : ""} vence hoje. Qualquer dúvida, é só me chamar!`;
+    }
+
+    const enviadas = await enviarPeloProvider({
+      provider, token, numero, mensagens: [texto], contexto: { numero, tipo, pedido },
+    });
+
+    if (enviadas > 0) {
+      // Grava no histórico: sem isso a mensagem some da bancada e a IA não sabe
+      // que ela mesma acabou de cobrar (responderia como se nada tivesse havido).
+      historico.push({ role: "model", text: texto, ts: Date.now() });
+      await convRef.set({
+        messages: historico,
+        followUpCobrancaTs: Date.now(),
+        followUpCobrancaTipo: tipo,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+
+    logger.info("followUpCobranca — concluido", { numero, tipo, pedido, canal, enviadas, texto });
+    return response.status(200).json({ ok: enviadas > 0, numero, tipo, enviadas });
+  } catch (err) {
+    logger.error("followUpCobranca — excecao", { error: String(err), stack: err.stack });
     return response.status(200).json({ error: "excecao", detalhe: String(err) });
   }
 });
