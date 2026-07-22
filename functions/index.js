@@ -684,7 +684,7 @@ async function cancelarBoletoAsaas({ apiKey, apiUrl, paymentId, contexto = {} })
  * Cria cliente + cobrança boleto no Asaas e devolve link e linha digitável.
  * Lança erro em qualquer falha — o chamador decide o fallback (marcar falhaIA).
  */
-async function gerarBoletoAsaas({ apiKey, apiUrl, valor, vencimentoDias, numero, agenteSlug, nome }) {
+async function gerarBoletoAsaas({ apiKey, apiUrl, valor, vencimentoDias, numero, agenteSlug, nome, dueDateISO }) {
   const base = (apiUrl || ASAAS_URL_PADRAO).replace(/\/+$/, "");
   const headers = { "Content-Type": "application/json", "access_token": apiKey };
 
@@ -709,7 +709,9 @@ async function gerarBoletoAsaas({ apiKey, apiUrl, valor, vencimentoDias, numero,
       customer: cliData.id,
       billingType: "BOLETO",
       value: Number(Number(valor).toFixed(2)),
-      dueDate: vencimentoISO(vencimentoDias),
+      // Data pedida pelo cliente manda; sem ela, o prazo padrão da config. Sem
+      // isto a IA prometia "vence terça" e o boleto saía com o prazo fixo.
+      dueDate: dueDateISO || vencimentoISO(vencimentoDias),
       externalReference: `${numero}_${agenteSlug}`,
       description: "Perfume Atracao Arabe / Lattifah",
     }),
@@ -1605,6 +1607,17 @@ async function processarWebhookCanal(provider, request, response) {
         }
       }
 
+      // Extração estruturada best-effort (não mexe no marcador nem no prompt
+      // principal). Fica FORA do bloco do CRM porque a data extraída também
+      // define o vencimento do boleto logo abaixo — antes, com o CRM desligado,
+      // o boleto perdia a data que o cliente pediu.
+      let extraido = { quantidade: null, endereco: null, dataDesejada: null, valorTotal: null };
+      if (leadPronto) {
+        extraido = await extrairDadosParaCrm(
+          geminiApiKey, historicoAtualizado, modelosGemini, { numero, agenteSlug }
+        );
+      }
+
       // 10d. Pedido direto no CRM — em paralelo ao webhook do ConverteChat acima
       // (que continua etiquetando/movendo o ticket lá). Dedup próprio, então um
       // dos dois pode estar desligado sem afetar o outro.
@@ -1621,11 +1634,6 @@ async function processarWebhookCanal(provider, request, response) {
             const crmApiUrl = (typeof crmCfg.apiUrl === "string" && crmCfg.apiUrl.trim()) || CRM_URL_PADRAO;
 
             if (crmAtivo && crmApiKey) {
-              // Extração estruturada best-effort (não mexe no marcador nem no prompt principal).
-              const extraido = await extrairDadosParaCrm(
-                geminiApiKey, historicoAtualizado, modelosGemini, { numero, agenteSlug }
-              );
-
               const primeiraMensagem = historicoAtualizado.find((m) => typeof m.ts === "number");
               const canalNome = (canal && settingsData.canais && settingsData.canais[canal] && settingsData.canais[canal].nome)
                 ? settingsData.canais[canal].nome
@@ -1656,10 +1664,16 @@ async function processarWebhookCanal(provider, request, response) {
               // 3) a data que o cliente pediu, quando pediu;
               // 4) pix e cartão são pagamento na hora — vencem hoje.
               const asaasCfgVenc = settingsData.asaas || {};
+              const dataPedidaValida = extraido.dataDesejada && extraido.dataDesejada >= hojeISOBrasilia()
+                ? extraido.dataDesejada
+                : null;
+              // Espelha EXATAMENTE a regra da emissão logo abaixo: data pedida
+              // manda, senão o prazo padrão. Se divergir, o vendedor cobra por
+              // uma data diferente da impressa no boleto do cliente.
               const boletoVenceEm =
                 (!pagamentoAdiado && formaSemAcento === "boleto" &&
                   settingsData.asaasApiKey && asaasCfgVenc.ativo !== false)
-                  ? vencimentoISO(asaasCfgVenc.vencimentoDias)
+                  ? (dataPedidaValida || vencimentoISO(asaasCfgVenc.vencimentoDias))
                   : null;
               const dataVencimento = (pagamentoAdiado && extraido.dataDesejada) ||
                 boletoVenceEm || extraido.dataDesejada ||
@@ -1860,14 +1874,28 @@ async function processarWebhookCanal(provider, request, response) {
                 { numero, agenteSlug, canal, nomeCliente }, settingsData);
             } else {
               try {
+                // Cliente que quer o boleto AGORA mas pagar numa data combinada
+                // (caso real: "preciso do boleto em mãos, pago até terça"): o
+                // vencimento é o dia dele, não o prazo padrão. Só aceitamos data
+                // de hoje em diante — passado o Asaas recusaria.
+                const vencePedido = extraido.dataDesejada && extraido.dataDesejada >= hojeISOBrasilia()
+                  ? extraido.dataDesejada
+                  : null;
+
                 const boleto = await gerarBoletoAsaas({
                   apiKey: asaasApiKey,
                   apiUrl: asaasCfg.apiUrl,
                   valor: valorBoleto,
                   vencimentoDias: asaasCfg.vencimentoDias,
+                  dueDateISO: vencePedido,
                   nome: nomeBoleto,
                   numero, agenteSlug,
                 });
+                if (vencePedido) {
+                  logger.info("boleto Asaas — vencimento na data pedida pelo cliente", {
+                    numero, agenteSlug, vencimento: vencePedido,
+                  });
+                }
 
                 // A linha digitável vai SOZINHA numa mensagem só dela, para o
                 // cliente copiar/colar limpo (mesma lógica da chave PIX).
