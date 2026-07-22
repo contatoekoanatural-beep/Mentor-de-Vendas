@@ -536,6 +536,16 @@ function hojeISOBrasilia() {
   return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+/** Hoje por extenso em pt-BR ("terça-feira, 22/07/2026") para o prompt da IA. */
+function hojePorExtensoBrasilia() {
+  const brt = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  const dias = ["domingo", "segunda-feira", "terça-feira", "quarta-feira",
+    "quinta-feira", "sexta-feira", "sábado"];
+  const dd = String(brt.getUTCDate()).padStart(2, "0");
+  const mm = String(brt.getUTCMonth() + 1).padStart(2, "0");
+  return `${dias[brt.getUTCDay()]}, ${dd}/${mm}/${brt.getUTCFullYear()}`;
+}
+
 /**
  * Linha digitável de um boleto (GET sem body — corpo vazio evita 403).
  * Best-effort: se falhar, devolve null e o chamador segue só com o link, que
@@ -787,10 +797,18 @@ exports.ping = onRequest((request, response) => {
 
 // ----------------------------------------
 // buildAgentSystemPrompt — monta o system prompt do agente
-// (cópia fiel de src/services/aiService.ts, sem tipos TS)
+// Nasceu como cópia de src/services/aiService.ts, mas ESTE é o que atende de
+// verdade: o do frontend (chat de teste) ficou para trás e não tem os atributos
+// do marcador. Ao mexer aqui, lembrar que o chat de teste não acompanha.
 // ----------------------------------------
 function buildAgentSystemPrompt(config, cases) {
   const sections = [config.base.trim()];
+
+  // A IA não tem relógio. Sem isto ela chuta datas ao combinar prazo com o
+  // cliente — na extração, um "dia cinco" em julho/2026 já virou 2024-05-05.
+  sections.push(
+    `\nDATA DE HOJE: ${hojePorExtensoBrasilia()}. Use SEMPRE esta data como referência ao falar de prazos, vencimentos ou datas combinadas com o cliente.`
+  );
 
   if (config.tone && config.tone.trim()) {
     sections.push(
@@ -803,26 +821,36 @@ function buildAgentSystemPrompt(config, cases) {
       `\nCONDIÇÃO DE LEAD PRONTO (OBRIGATÓRIO):
 Quando a seguinte situação ocorrer — ${config.handoffRule.trim()} — você DEVE obrigatoriamente adicionar o marcador [LEAD_PRONTO] ao final absoluto da sua resposta.
 
-O marcador carrega a forma de pagamento e, quando a forma for boleto, o valor total e o nome do cliente:
-[LEAD_PRONTO forma=<pix|boleto|cartao> valor=<valor total em reais> nome=<nome completo do cliente>]
+O marcador carrega a forma de pagamento, quando o cliente vai pagar e, quando a forma for boleto, o valor total e o nome do cliente:
+[LEAD_PRONTO forma=<pix|boleto|cartao> valor=<valor total em reais> pagar=<agora|depois> nome=<nome completo do cliente>]
 - "forma" é a forma que o cliente escolheu, sem acento: pix, boleto ou cartao.
 - "valor" é o valor TOTAL da compra conforme a tabela de preços, com ponto decimal (ex.: 149.90). OBRIGATÓRIO quando forma=boleto; nas demais formas pode ser omitido.
+- "pagar" diz QUANDO o cliente vai pagar: use "agora" quando ele vai pagar já, hoje ou nos próximos dias; use "depois" APENAS quando ele avisou que só consegue pagar numa data futura específica (ex.: "só recebo dia 5", "pode deixar pro dia 27", "meu salário cai dia 10"). Na dúvida, use "agora".
 - "nome" é o nome completo que o cliente informou, para emitir o boleto no nome dele. OBRIGATÓRIO quando forma=boleto e deve ser SEMPRE o ÚLTIMO atributo do marcador (pode conter espaços). Nas demais formas, omita.
-- Exemplo boleto: [LEAD_PRONTO forma=boleto valor=249.90 nome=João da Silva]
-- Exemplo pix: [LEAD_PRONTO forma=pix]
+- Exemplo boleto agora: [LEAD_PRONTO forma=boleto valor=249.90 pagar=agora nome=João da Silva]
+- Exemplo boleto para data futura: [LEAD_PRONTO forma=boleto valor=149.90 pagar=depois nome=Maria Souza]
+- Exemplo pix: [LEAD_PRONTO forma=pix pagar=agora]
 
 Regras rigorosas para a emissão do marcador:
 1. O marcador deve ser escrito exatamente nesse formato (LEAD_PRONTO em maiúsculas, entre colchetes) em uma LINHA TOTALMENTE ISOLADA no final absoluto de toda a sua resposta.
 2. O marcador deve ficar sempre DEPOIS da última linha de conteúdo e DEPOIS de qualquer separador de mensagens "---" (caso esteja no formato split). O marcador NÃO é uma mensagem para o cliente e NÃO deve ser tratado como uma das partes do split. Não insira outro separador "---" após o marcador.
 3. Este marcador é de uso estritamente interno do sistema e invisível para o cliente. NUNCA mencione, explique ou faça referência ao marcador na conversa, e NUNCA escreva o valor ou a forma como se fossem texto para o cliente.
 4. Você deve CONTINUAR conversando e atendendo o cliente normalmente, respondendo suas dúvidas e conduzindo o fechamento como se você fosse o vendedor. NÃO pare de responder e NÃO encerre o fluxo.
-5. Quando forma=boleto, NÃO escreva você mesma nenhum link, código de barras ou linha digitável — o sistema anexa o boleto automaticamente logo após a sua mensagem de transição. Apenas conduza normalmente ("já te envio por aqui").
+5. Quando forma=boleto e pagar=agora, NÃO escreva você mesma nenhum link, código de barras ou linha digitável — o sistema anexa o boleto automaticamente logo após a sua mensagem de transição. Apenas conduza normalmente ("já te envio por aqui").
+6. Quando pagar=depois, o boleto NÃO é emitido agora: ele só é gerado perto da data que o cliente combinou, senão vence antes de ele conseguir pagar. Portanto, NUNCA diga que vai mandar o boleto agora nem peça para ele aguardar o envio — ele não vai receber nada e vai ficar esperando à toa. Em vez disso, confirme o combinado com naturalidade e deixe claro que VOCÊ volta a procurá-lo perto da data. Ex.: "Perfeito, deixo tudo reservado aqui pra você. Uns dias antes do dia 5 eu te chamo pra mandar o boleto certinho, pode ser?"
+7. O ideal é sempre o cliente pagar o quanto antes — só trate como data futura quando ELE pedir. Não ofereça nem sugira pagar depois por conta própria.
 
-Exemplo de formato de resposta quando a condição de lead pronto ocorre (boleto):
+Exemplo de formato de resposta quando a condição de lead pronto ocorre (boleto, pagando agora):
 Perfeito! Vou gerar o seu boleto aqui com o vencimento certinho.
 ---
 Só um minutinho que já te envio por aqui mesmo.
-[LEAD_PRONTO forma=boleto valor=149.90]`
+[LEAD_PRONTO forma=boleto valor=149.90 pagar=agora]
+
+Exemplo quando o cliente só vai pagar numa data futura:
+Combinado, Maria! Já deixo o seu pedido reservado aqui no sistema.
+---
+Uns dias antes do dia 5 eu te chamo pra te mandar o boleto certinho, tudo bem?
+[LEAD_PRONTO forma=boleto valor=149.90 pagar=depois nome=Maria Souza]`
     );
   }
 
@@ -1370,9 +1398,10 @@ async function processarWebhookCanal(provider, request, response) {
       let formaPagamento = null;
       let valorBoleto = null;
       let nomeBoleto = null;
+      let pagamentoAdiado = false;
       let respostaLimpa = respostaCrua;
-      // Aceita [LEAD_PRONTO] ou [LEAD_PRONTO forma=boleto valor=149.90 nome=João Silva]
-      // (forma/valor em qualquer ordem; nome, se houver, é sempre o último — pode ter espaços).
+      // Aceita [LEAD_PRONTO] ou [LEAD_PRONTO forma=boleto valor=149.90 pagar=depois nome=João Silva]
+      // (forma/valor/pagar em qualquer ordem; nome, se houver, é sempre o último — pode ter espaços).
       const regexDetect = /^[ \t]*\[LEAD_PRONTO([^\]]*)\][ \t]*$/mi;
       const matchLead = respostaLimpa.match(regexDetect);
       if (matchLead) {
@@ -1380,12 +1409,18 @@ async function processarWebhookCanal(provider, request, response) {
         const attrs = matchLead[1] || "";
         const fm = attrs.match(/forma\s*=\s*([a-zà-ú]+)/i);
         const vm = attrs.match(/valor\s*=\s*([\d.,]+)/i);
+        const pm = attrs.match(/pagar\s*=\s*([a-zà-ú]+)/i);
         const nm = attrs.match(/nome\s*=\s*(.+?)\s*$/i);
         formaPagamento = fm ? fm[1].toLowerCase() : null;
         valorBoleto = vm ? parseValorBRL(vm[1]) : null;
-        // remove sobra caso o modelo ponha forma/valor DEPOIS do nome; limita tamanho
-        nomeBoleto = nm ? nm[1].replace(/\s+(?:forma|valor)\s*=.*$/i, "").trim().slice(0, 80) : null;
-        logger.info("lead pronto detectado", { numero, agenteSlug, formaPagamento, valorBoleto, nomeBoleto });
+        // Só "depois" adia; qualquer outra coisa (ou ausência) cobra na hora —
+        // o default seguro é o comportamento antigo, de emitir agora.
+        pagamentoAdiado = pm ? pm[1].toLowerCase().startsWith("depois") : false;
+        // remove sobra caso o modelo ponha forma/valor/pagar DEPOIS do nome; limita tamanho
+        nomeBoleto = nm ? nm[1].replace(/\s+(?:forma|valor|pagar)\s*=.*$/i, "").trim().slice(0, 80) : null;
+        logger.info("lead pronto detectado", {
+          numero, agenteSlug, formaPagamento, valorBoleto, nomeBoleto, pagamentoAdiado,
+        });
 
         // Remover a(s) linha(s) do marcador (com ou sem atributos)
         respostaLimpa = respostaLimpa.replace(/^[ \t]*\[LEAD_PRONTO[^\]]*\][ \t]*\r?\n?/gmi, "");
@@ -1550,21 +1585,25 @@ async function processarWebhookCanal(provider, request, response) {
               const formaSemAcento = (formaPagamento || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
 
               // Vencimento do pedido, por prioridade:
-              // 1) BOLETO com Asaas ligado — a data que o Asaas vai carimbar no boleto
-              //    gerado logo abaixo (mesma config, mesmo helper). Ganha até da data que
-              //    o cliente pediu, porque hoje o boleto sai com o vencimento padrão de
-              //    qualquer jeito: gravar a data pedida mostraria ao vendedor uma data
-              //    diferente da impressa no boleto que o cliente recebeu. Quando a Frente B
-              //    (não gerar boleto na hora p/ data futura) existir, isso se inverte.
-              // 2) a data que o cliente pediu, quando pediu;
-              // 3) pix e cartão são pagamento na hora — vencem hoje.
+              // 1) pagamento ADIADO — vale a data que o cliente pediu. Nenhum boleto
+              //    foi emitido agora, então não há data do Asaas competindo: esta é a
+              //    data real do combinado e é ela que a agenda de cobrança persegue.
+              // 2) BOLETO emitido agora — a data que o Asaas carimbou no boleto (mesma
+              //    config, mesmo helper). Ganha da data pedida porque é a que está
+              //    impressa no boleto que o cliente recebeu; mostrar outra ao vendedor
+              //    faria ele cobrar pelo dia errado.
+              // 3) a data que o cliente pediu, quando pediu;
+              // 4) pix e cartão são pagamento na hora — vencem hoje.
               const asaasCfgVenc = settingsData.asaas || {};
               const boletoVenceEm =
-                (formaSemAcento === "boleto" && settingsData.asaasApiKey && asaasCfgVenc.ativo !== false)
+                (!pagamentoAdiado && formaSemAcento === "boleto" &&
+                  settingsData.asaasApiKey && asaasCfgVenc.ativo !== false)
                   ? vencimentoISO(asaasCfgVenc.vencimentoDias)
                   : null;
-              const dataVencimento = boletoVenceEm || extraido.dataDesejada ||
-                ((formaSemAcento === "pix" || formaSemAcento === "cartao") ? hojeISOBrasilia() : null);
+              const dataVencimento = (pagamentoAdiado && extraido.dataDesejada) ||
+                boletoVenceEm || extraido.dataDesejada ||
+                ((!pagamentoAdiado && (formaSemAcento === "pix" || formaSemAcento === "cartao"))
+                  ? hojeISOBrasilia() : null);
 
               const payloadCrm = {
                 nome: nomeBoleto || nomeCliente || undefined,
@@ -1662,7 +1701,14 @@ async function processarWebhookCanal(provider, request, response) {
         const ultimaAcaoTs = dadosConv.boletoAsaasUltimoEnvioTs || dadosConv.boletoAsaasTs || 0;
         const aindaNaJanela = (Date.now() - ultimaAcaoTs) < BOLETO_INTERVALO_MS;
 
-        if (!asaasApiKey || !asaasAtivo) {
+        if (pagamentoAdiado) {
+          // Cliente combinou pagar numa data futura: emitir agora entregaria um
+          // boleto que vence ANTES da data dele. A emissão fica para o follow-up
+          // perto do vencimento; o prompt instrui a IA a não prometer envio agora.
+          logger.info("boleto Asaas adiado: cliente vai pagar em data futura", {
+            numero, agenteSlug, valorBoleto,
+          });
+        } else if (!asaasApiKey || !asaasAtivo) {
           logger.info("boleto Asaas pulado: sem chave ou desativado", {
             numero, temChave: !!asaasApiKey, ativo: asaasAtivo,
           });
